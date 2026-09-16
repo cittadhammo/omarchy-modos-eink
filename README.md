@@ -10,6 +10,10 @@ widget. The service owns the helper process, device state, and polling. The bar
 widget renders the compact status label and hosts the panel used to choose a
 mode.
 
+## Screenshot
+
+![Modos E-Ink omarchy widget](screenshots/panel.png)
+
 ## Current behavior
 
 The bar label is an e-ink glyph followed by the last mode successfully selected.
