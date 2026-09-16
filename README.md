@@ -246,3 +246,20 @@ machines.
 Keep the udev rule in the repository and document that installing it under
 `/etc/udev/rules.d/` requires administrator access. The plugin itself never
 uses sudo.
+
+## Removal
+
+Remove the plugin, the HID rule it installed, and its local data:
+
+```sh
+omarchy plugin remove cittadhammo.modos-eink --yes
+sudo rm -f /etc/udev/rules.d/69-modos-glider.rules
+sudo udevadm control --reload-rules
+rm -rf ~/.local/share/modos-eink
+rm -f ~/.local/state/modos-eink/state.json
+```
+
+The plugin never touches user configuration, so a proper removal restores the
+pre-install state. The Python venv under `~/.local/share/modos-eink/venv/` and
+the local `glider-api` checkout under `~/github/glider-api/` were installed for
+this plugin; delete them too if nothing else uses them.
