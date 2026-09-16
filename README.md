@@ -98,19 +98,26 @@ invent read-back for those values.
 
 ## Installation
 
-The plugin directory is already in Omarchy's local discovery path. Install the
-Rust build prerequisite and compile the Python extension into the venv used by
-the included launcher:
+Install the plugin from git and enable it:
+
+```sh
+omarchy plugin add https://github.com/cittadhammo/omarchy-modos-eink.git --enable
+```
+
+This places it in Omarchy's local discovery path (and adds the hot-reload
+watcher described later). Now install the Rust build prerequisite and compile
+the Python extension into the venv used by the included launcher:
 
 ```sh
 sudo pacman -S --needed rust pkgconf
+git clone https://github.com/Modos-Labs/glider-api ~/github/glider-api
 python3 -m venv ~/.local/share/modos-eink/venv
 PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 \
   ~/.local/share/modos-eink/venv/bin/pip install ~/github/glider-api
 ```
 
-The compatibility flag is needed on this machine because Python 3.14 is newer
-than the PyO3 0.24 version guard (which stops at Python 3.13). A Python 3.13
+The compatibility flag is needed on Python 3.14 and later, which is newer than
+the PyO3 0.24 version guard (which stops at Python 3.13). A Python 3.13
 virtualenv may be used instead. To use another interpreter, set
 `MODOS_EINK_PYTHON` in the environment that starts `omarchy-shell`.
 
@@ -141,7 +148,8 @@ getfacl /dev/hidraw0
 The ACL should contain `user:<your-user>:rw-`. Do not use a permanent manual
 `chmod`; the udev rule is the persistent solution.
 
-Enable or place the widget in the existing center section:
+The `--enable` flag on `omarchy plugin add` already places the widget in the
+bar; move it to an explicit section if desired:
 
 ```sh
 omarchy plugin validate ~/.config/omarchy/plugins/cittadhammo.modos-eink
@@ -223,12 +231,17 @@ normal case.
 
 ## Publishing
 
-Put this directory in a Git repository and install it elsewhere with:
+The canonical repository for this plugin is:
 
 ```sh
-omarchy plugin validate .
-omarchy plugin add <git-url> --enable
+omarchy plugin add https://github.com/cittadhammo/omarchy-modos-eink.git --enable
 ```
+
+This directory is the repository itself (see the top "Installation" section
+for the full setup). To publish an update, just commit and push here; there is
+no plugin registry to upload to — `omarchy plugin add` installs straight from
+the git URL, and `omarchy plugin update <id>` pulls newer commits on installed
+machines.
 
 Keep the udev rule in the repository and document that installing it under
 `/etc/udev/rules.d/` requires administrator access. The plugin itself never
