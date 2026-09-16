@@ -1,0 +1,13 @@
+#!/bin/sh
+# Keep the compiled glider-api isolated from Omarchy's Python. The documented
+# virtualenv is preferred, while direct invocation remains useful for testing.
+set -eu
+
+plugin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+venv_python="${MODOS_EINK_PYTHON:-$HOME/.local/share/modos-eink/venv/bin/python}"
+
+if [ -x "$venv_python" ]; then
+  exec "$venv_python" "$plugin_dir/modosctl.py" "$@"
+fi
+
+exec "$plugin_dir/modosctl.py" "$@"

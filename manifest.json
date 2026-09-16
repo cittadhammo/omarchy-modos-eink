@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "cittadhammo.modos-eink",
+  "name": "Modos E-Ink",
+  "version": "0.1.0",
+  "author": "cittadhammo",
+  "description": "Refresh-mode controls for a Modos Paper display",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Modos E-Ink",
+    "description": "Show and change the Modos Paper refresh mode",
+    "category": "Hardware",
+    "defaultSection": "center",
+    "allowMultiple": false
+  }
+}

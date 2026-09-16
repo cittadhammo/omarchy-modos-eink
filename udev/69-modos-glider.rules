@@ -1,0 +1,4 @@
+# Modos Glider/Caster raw HID control channel (VID 1209, PID ae86).
+# This must run after 60-persistent-hidraw.rules supplies ID_VENDOR_ID and
+# before 73-seat-late.rules invokes the uaccess ACL helper.
+SUBSYSTEM=="hidraw", ENV{ID_BUS}=="usb", ENV{ID_VENDOR_ID}=="1209", ENV{ID_MODEL_ID}=="ae86", TAG+="uaccess", MODE="0660"
