@@ -27,12 +27,16 @@ Interactions are intentionally simple:
 
 - Left-click opens the panel. The panel shows the current option, every
   available mode (human label plus technical name), and a short explanation.
-  Click a row to apply it.
+  Click a row to apply it. Applying a mode immediately performs a hard
+  full-screen redraw under the new mode, so the panel is drawn cleanly instead
+  of keeping the previous rendering.
 - Right-click forces a hard full-screen redraw (black-to-white flash) to clear
   ghosting — the same behaviour as the Dev Kit's third physical button. It does
   not change the refresh mode.
 - Keyboard navigation inside the panel uses arrow keys and Enter; Escape closes
   it. Scrolling the bar widget has no action.
+- Global shortcut: **SUPER + R** forces the same hard full-screen redraw from
+  anywhere (bound in `~/.config/hypr/bindings.lua` to `modosctl redraw`).
 
 Mode naming: the device's own on-screen menu presents four presets
 (*Browsing, Typing, Reading, Watching*), while glider-api exposes six finer
@@ -171,10 +175,12 @@ diagnostic on stderr when it fails. Exit status is zero only for success.
 
 `status` checks the VID/PID, verifies read/write access to the matching
 `/dev/hidraw*` node, imports `glider_api`, and opens the HID device. `set-mode`
-uses the full-screen rectangle from `DisplayConfig.glider_standard()` and only
-writes the state file after the API call succeeds. `redraw` calls the API's
-`Display.redraw(full_screen())` — a hard black-to-white flash that clears
-ghosting without touching the mode — and never writes state.
+uses the full-screen rectangle from `DisplayConfig.glider_standard()`, applies
+the mode, then performs the same hard redraw so the display is refreshed
+cleanly under the new mode; it writes the state file only after the API calls
+succeed. `redraw` calls the API's `Display.redraw(full_screen())` — a hard
+black-to-white flash that clears ghosting without touching the mode — and never
+writes state.
 
 Expected failure messages identify one of: missing device, missing HID ACL,
 missing Python binding, unknown mode, or a controller/API communication error.
