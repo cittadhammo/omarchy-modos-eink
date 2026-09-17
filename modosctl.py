@@ -9,9 +9,12 @@ never presents that value as a hardware read-back.
 white) to clear accumulated ghosting, matching the Dev Kit's third physical
 button. Use it only when ghosting is actually visible.
 
-``set-mode`` switches the active refresh mode for the full screen; the SDK's
-``set_mode`` already triggers an immediate redraw of the region in the new
-mode, so no extra redraw is sent.
+``set-mode`` switches the active refresh mode for the full screen. The SDK's
+``set_mode`` already redraws the region in the new mode, but on real panels a
+single pass does not fully settle the display, so the sequence is:
+``set_mode(mode)`` -> ``redraw()`` (hard clear of residual ghosting) ->
+``set_mode(mode)`` again, so the final frame is rendered in the newly selected
+mode's waveform instead of ``redraw``'s non-mode-specific pass.
 """
 
 from __future__ import annotations
@@ -188,6 +191,8 @@ def set_mode(name: str) -> int:
         Display, DisplayConfig, Mode = api()
         config = DisplayConfig.glider_standard()
         display = Display.new_with_config(config)
+        display.set_mode(getattr(Mode, name), config.full_screen())
+        display.redraw(config.full_screen())
         display.set_mode(getattr(Mode, name), config.full_screen())
         write_state(name)
     except Exception as exc:

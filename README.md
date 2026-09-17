@@ -27,8 +27,10 @@ Interactions are intentionally simple:
 
 - Left-click opens the panel. The panel shows the current option, every
   available mode (human label plus technical name), and a short explanation.
-  Click a row to apply it; the SDK's `set_mode` redraws the screen immediately
-  in the newly selected mode.
+  Click a row to apply it. Applying a mode always performs a three-step settle:
+  `set_mode(mode)` → hard `redraw()` (clears residual ghosting) →
+  `set_mode(mode)` again, so the final frame is rendered in the newly selected
+  mode's waveform.
 - Right-click forces a hard full-screen redraw (black-to-white flash) to clear
   ghosting — the same behaviour as the Dev Kit's third physical button. It does
   not change the refresh mode.
@@ -184,10 +186,12 @@ diagnostic on stderr when it fails. Exit status is zero only for success.
 `status` checks the VID/PID, verifies read/write access to the matching
 `/dev/hidraw*` node, imports `glider_api`, and opens the HID device. `set-mode`
 uses the full-screen rectangle from `DisplayConfig.glider_standard()`, applies
-the mode (the SDK redraws the region immediately in the new mode), and writes
-the state file only after the API call succeeds. No extra hard redraw is sent,
-since the SDK's `redraw` is meant only for clearing visible ghosting on demand.
-`redraw` calls the API's `Display.redraw(full_screen())` — a hard
+the sequence `set_mode(mode)` → `redraw()` → `set_mode(mode)`, and writes the
+state file only after all API calls succeed. A single `set_mode` pass does not
+fully settle the panel, so the hard `redraw()` clears residual ghosting, and
+the final `set_mode(mode)` re-renders the current image in the newly selected
+mode's waveform (a lone `redraw` would leave the image in a non-mode-specific
+render). `redraw` calls the API's `Display.redraw(full_screen())` — a hard
 black-to-white flash that clears ghosting without touching the mode — and never
 writes state.
 

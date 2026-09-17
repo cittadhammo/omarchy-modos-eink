@@ -207,7 +207,7 @@ Panel {
         Text {
           visible: root.showRefreshHint
           width: parent.width
-          text: "Mode applied — the screen redraws itself automatically. If the display still shows ghosting, force a hard refresh: right-click the bar icon or press SUPER + R."
+          text: "Mode applied — the display is being settled and refreshed in the selected mode. If ghosting ever persists, right-click the bar icon or press SUPER + R to force another hard refresh."
           wrapMode: Text.Wrap
           color: Qt.darker(root.foreground, 1.45)
           font.family: root.fontFamily
