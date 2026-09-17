@@ -11,6 +11,7 @@ Panel {
   property var hostWidget: null
   property var service: null
   property int selectedIndex: 0
+  property bool showRefreshHint: false
   readonly property var barIdentity: hostWidget || root
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
@@ -29,10 +30,18 @@ Panel {
 
   function selectMode(mode) {
     if (service) service.setMode(mode)
+    root.showRefreshHint = true
+    refreshHintTimer.restart()
   }
 
   function forceRedraw() {
     if (service) service.redraw()
+  }
+
+  Timer {
+    id: refreshHintTimer
+    interval: 6000
+    onTriggered: root.showRefreshHint = false
   }
 
   onOpenedChanged: {
@@ -122,7 +131,7 @@ Panel {
           }
 
           Text {
-            text: "(right-click the bar icon to force a refresh)"
+            text: "(right-click the bar icon or press SUPER+R to force a hard refresh)"
             color: Qt.darker(root.foreground, 1.45)
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -193,6 +202,16 @@ Panel {
               onClicked: root.selectMode(modelData)
             }
           }
+        }
+
+        Text {
+          visible: root.showRefreshHint
+          width: parent.width
+          text: "Mode applied — the screen redraws itself automatically. If the display still shows ghosting, force a hard refresh: right-click the bar icon or press SUPER + R."
+          wrapMode: Text.Wrap
+          color: Qt.darker(root.foreground, 1.45)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
         }
 
         Text {
