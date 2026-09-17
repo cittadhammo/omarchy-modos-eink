@@ -7,11 +7,11 @@ never presents that value as a hardware read-back.
 
 ``redraw`` forces the device to do a hard full-screen refresh (black to
 white) to clear accumulated ghosting, matching the Dev Kit's third physical
-button.
+button. Use it only when ghosting is actually visible.
 
-``set-mode`` switches the active refresh mode and immediately performs the
-same hard full-screen redraw, so the display is redrawn cleanly under the new
-mode instead of keeping the previous rendering.
+``set-mode`` switches the active refresh mode for the full screen; the SDK's
+``set_mode`` already triggers an immediate redraw of the region in the new
+mode, so no extra redraw is sent.
 """
 
 from __future__ import annotations
@@ -189,7 +189,6 @@ def set_mode(name: str) -> int:
         config = DisplayConfig.glider_standard()
         display = Display.new_with_config(config)
         display.set_mode(getattr(Mode, name), config.full_screen())
-        display.redraw(config.full_screen())
         write_state(name)
     except Exception as exc:
         return unavailable("could not set " + name + ": " + str(exc), nodes)
