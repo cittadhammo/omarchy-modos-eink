@@ -63,8 +63,10 @@ hover state, selection state, and popup surface follow the active theme.
 
 ## Hardware and API facts
 
-The checked-out upstream source is `~/github/glider-api` at commit `b80cd7e`.
-Its standard Glider configuration is:
+The checked-out upstream source is `~/github/glider-api` pinned to the
+immutable commit `b80cd7ed2ea16b5f93800ba1fb4ea75465acf04d` ("sdk-developer-readiness") —
+the exact snapshot this plugin is built and validated against. Its standard
+Glider configuration is:
 
 - USB vendor ID: `0x1209`
 - USB product ID: `0xae86`
@@ -115,10 +117,17 @@ the Python extension into the venv used by the included launcher:
 ```sh
 sudo pacman -S --needed rust pkgconf
 git clone https://github.com/Modos-Labs/glider-api ~/github/glider-api
+git -C ~/github/glider-api checkout b80cd7ed2ea16b5f93800ba1fb4ea75465acf04d
 python3 -m venv ~/.local/share/modos-eink/venv
 PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 \
   ~/.local/share/modos-eink/venv/bin/pip install ~/github/glider-api
 ```
+
+The `git checkout` line pins `glider-api` to an immutable commit SHA so every
+install builds exactly the code this plugin was reviewed against. To update
+`glider-api` later, move the pin forward deliberately: checkout a newer commit
+in that repository, rerun the `pip install` above, retest, and bump the SHA in
+this file and in `modosctl.py`.
 
 The compatibility flag is needed on Python 3.14 and later, which is newer than
 the PyO3 0.24 version guard (which stops at Python 3.13). A Python 3.13
