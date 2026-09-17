@@ -11,7 +11,6 @@ Panel {
   property var hostWidget: null
   property var service: null
   property int selectedIndex: 0
-  property bool showRefreshHint: false
   readonly property var barIdentity: hostWidget || root
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
@@ -30,18 +29,10 @@ Panel {
 
   function selectMode(mode) {
     if (service) service.setMode(mode)
-    root.showRefreshHint = true
-    refreshHintTimer.restart()
   }
 
   function forceRedraw() {
     if (service) service.redraw()
-  }
-
-  Timer {
-    id: refreshHintTimer
-    interval: 6000
-    onTriggered: root.showRefreshHint = false
   }
 
   onOpenedChanged: {
@@ -118,10 +109,12 @@ Panel {
         PanelSeparator { foreground: root.foreground }
 
         Row {
+          id: refreshModeRow
           width: parent.width
           spacing: Style.space(12)
 
           Text {
+            id: refreshTitle
             text: "REFRESH MODE"
             color: Qt.darker(root.foreground, 1.45)
             font.family: root.fontFamily
@@ -131,13 +124,24 @@ Panel {
           }
 
           Text {
-            text: "(right-click the bar icon or press SUPER+R to force a hard refresh)"
+            text: "(right-click the bar icon to force a refresh)"
             color: Qt.darker(root.foreground, 1.45)
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
             horizontalAlignment: Text.AlignRight
             width: parent.width - Style.space(96)
           }
+        }
+
+        Text {
+          text: "Please refresh after changing mode"
+          color: Qt.darker(root.foreground, 1.45)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          horizontalAlignment: Text.AlignRight
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.rightMargin: Style.space(96) - refreshTitle.implicitWidth - refreshModeRow.spacing
         }
 
         Repeater {
@@ -202,16 +206,6 @@ Panel {
               onClicked: root.selectMode(modelData)
             }
           }
-        }
-
-        Text {
-          visible: root.showRefreshHint
-          width: parent.width
-          text: "Mode applied — the display is being settled and refreshed in the selected mode. If ghosting ever persists, right-click the bar icon or press SUPER + R to force another hard refresh."
-          wrapMode: Text.Wrap
-          color: Qt.darker(root.foreground, 1.45)
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.bodySmall
         }
 
         Text {

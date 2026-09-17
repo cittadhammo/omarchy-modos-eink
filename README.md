@@ -27,17 +27,12 @@ Interactions are intentionally simple:
 
 - Left-click opens the panel. The panel shows the current option, every
   available mode (human label plus technical name), and a short explanation.
-  Click a row to apply it. Applying a mode always performs a three-step settle:
-  `set_mode(mode)` → hard `redraw()` (clears residual ghosting) →
-  `set_mode(mode)` again, so the final frame is rendered in the newly selected
-  mode's waveform.
+  Click a row to apply it.
 - Right-click forces a hard full-screen redraw (black-to-white flash) to clear
   ghosting — the same behaviour as the Dev Kit's third physical button. It does
   not change the refresh mode.
 - Keyboard navigation inside the panel uses arrow keys and Enter; Escape closes
   it. Scrolling the bar widget has no action.
-- Global shortcut: **SUPER + R** forces the same hard full-screen redraw from
-  anywhere (bound in `~/.config/hypr/bindings.lua` to `modosctl redraw`).
 
 Mode naming: the device's own on-screen menu presents four presets
 (*Browsing, Typing, Reading, Watching*), while glider-api exposes six finer
@@ -185,15 +180,10 @@ diagnostic on stderr when it fails. Exit status is zero only for success.
 
 `status` checks the VID/PID, verifies read/write access to the matching
 `/dev/hidraw*` node, imports `glider_api`, and opens the HID device. `set-mode`
-uses the full-screen rectangle from `DisplayConfig.glider_standard()`, applies
-the sequence `set_mode(mode)` → `redraw()` → `set_mode(mode)`, and writes the
-state file only after all API calls succeed. A single `set_mode` pass does not
-fully settle the panel, so the hard `redraw()` clears residual ghosting, and
-the final `set_mode(mode)` re-renders the current image in the newly selected
-mode's waveform (a lone `redraw` would leave the image in a non-mode-specific
-render). `redraw` calls the API's `Display.redraw(full_screen())` — a hard
-black-to-white flash that clears ghosting without touching the mode — and never
-writes state.
+uses the full-screen rectangle from `DisplayConfig.glider_standard()` and only
+writes the state file after the API call succeeds. `redraw` calls the API's
+`Display.redraw(full_screen())` — a hard black-to-white flash that clears
+ghosting without touching the mode — and never writes state.
 
 Expected failure messages identify one of: missing device, missing HID ACL,
 missing Python binding, unknown mode, or a controller/API communication error.
