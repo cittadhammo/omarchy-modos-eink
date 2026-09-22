@@ -1,8 +1,16 @@
 # Glider tone control over USB HID — experiment log
 
 Date: 2026-09-22
-Status: **firmware flashed and partially working; screen video path currently dead — stock release 1.1.1 recovery flash in progress**
+Status: **experiment concluded — screen recovered by flashing stock release 1.1.1; all work preserved on local `tone-control` branches (nothing pushed)**
 Upstream issue: https://github.com/Modos-Labs/glider-api/issues/7
+
+> **Outcome summary:** Device read-back (GETTONE/GETMODE/GETSIGNAL) was
+> verified working on hardware with the custom firmware. The SETLIGHTNESS
+> setter was accepted by the firmware but the change did not persist, and a
+> subsequent power cycle left the video path dead (MCU/USB alive). Flashing
+> the stock 1.1.1 release fully recovered the screen, confirming the fault
+> was in the custom build. Root cause not yet identified; prime suspect is
+> `config_save()` (external-flash write) executed in the USB task context.
 
 This document records everything we learned, implemented, and tried while adding
 host-controllable lightness/contrast (and state read-back) to the Modos Glider
@@ -180,10 +188,18 @@ be erased by software.
    Cloudflare-protected against CLI tools):
    `https://gitlab.com/zephray/glider/-/uploads/63c7b2bdcb3b12bd8a076e5501182a45/1.1.1.tar.gz`
 2. Extract; inside is `glider_ec_rtos.bin` (+ FPGA bitstreams, fonts, config —
-   we only need the MCU bin; our config.bin on the device is intact).
+   we only needed the MCU bin; the config.bin on the device was intact).
 3. Hold K1 while plugging in (DFU), then
    `dfu-util -a 0 -i 0 -s 0x08000000:leave -D glider_ec_rtos.bin`.
-4. Unplug/replug normally.
+4. **Result: screen recovered immediately — no unplug/replug was even
+   needed after DFU-exit.** Video, buttons and OSD all back to normal on
+   stock 1.1.1, which confirms the fault was in the custom build, not the
+   hardware or the device's persisted config.
+
+Note: the stock 1.1.1 MCU binary is built from a slightly newer upstream
+(`16bdb70c`) than the firmware source we patched (`ed94ef7`, current GitHub
+`main`). A diff between those two commits is a sensible first step before
+rebasing the tone patch.
 
 udev rules needed on the host (installed):
 
@@ -198,28 +214,43 @@ replug) or a udev rule for the CDC ACM interface.
 
 ## 8. Next steps
 
-- [ ] Flash stock 1.1.1 → confirm screen recovers (isolates our build).
-- [ ] If it recovers: bisect our firmware — first flash = our build with
-      `config_save()` removed from the tone setters (defer saves, or bounce
-      them to the UI/housekeeping task via a flag) → retest set-lightness.
-- [ ] If stock also fails with the same symptom: the problem predates our
-      build — suspect external flash/config state; try
-      `setres 13.3 1600 1200 75 cvt-rb2` + `setcfg save` from the serial
-      shell, or re-flash config via `flash.py`.
+- [x] Flash stock 1.1.1 → screen recovered (fault isolated to our build).
+- [ ] Diff upstream `ed94ef7` (our base) vs `16bdb70c` (stock 1.1.1) for
+      fixes we missed — this is now the *first* suspect for the failure.
+- [ ] If the diff doesn't explain it: rebuild our patch on `16bdb70c` with
+      `config_save()` removed from the tone setters (defer saves via a flag
+      consumed by the UI/housekeeping task) → retest set-lightness with a
+      backup monitor attached and a short timeout before any power cycle.
 - [ ] Whatever the outcome: report findings (firmware patch, protocol,
       debugging data) on glider-api issue #7; the command design itself
       (ranges, response byte layout) is worth keeping regardless.
-- [ ] Host-side work (glider-api, modosctl, plugin UI) is complete and
+- [x] Host-side work (glider-api, modosctl, plugin UI) is complete and
       backwards-compatible — it degrades gracefully on stock firmware and
       needs no further changes unless the wire format changes in review.
+      Preserved on the `tone-control` branch of both repos.
 
-## 9. Artifacts
+## 9. Repository state after the experiment
+
+| Repo | Branch | State |
+|---|---|---|
+| `~/Github/Glider` | `usb-tone-control` (`511ad59`) | firmware patch; `main`/`master` untouched at `ed94ef7` |
+| `~/Github/glider-api` | `tone-control` (`fcf04da`) | host API work; `main` untouched at pinned `b80cd7e` |
+| plugin | `tone-control` (`c13b061`) | tone UI + helper + this log; `master` clean at `f0b51a1` |
+
+The venv binding was rebuilt from the `tone-control` branch during testing;
+rebuild it from the pinned `main` after checking out to restore the exact
+plugin-README state (`PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 pip install
+--force-reinstall --no-deps ~/Github/glider-api`).
+
+Nothing has been pushed anywhere, per the ground rule for this experiment.
+
+## 10. Artifacts
 
 - `~/Github/Glider` branch `usb-tone-control`, commit `511ad59` (firmware patch)
-- `~/Github/glider-api` working tree (Tone + setters/getters + tests; uncommitted)
-- plugin: `modosctl.py`, `Service.qml`, `Panel.qml` (tone support; live in
-  `~/.config/omarchy/plugins/cittadhammo.modos-eink/`)
+- `~/Github/glider-api` branch `tone-control`, commit `fcf04da` (host API)
+- plugin branch `tone-control`, commit `c13b061` (helper + panel + this log)
 - debug helpers: `/tmp/shellcmd.py`, `/tmp/shellsession.py`,
   `/tmp/bootlisten.py` (serial console tools; recreate from this doc if lost)
 - build log: `/tmp/mcu-build-2.0.0.log`
-- stock release: `/tmp/glider-stock/` (once downloaded)
+- stock release: `~/Github/1.1.1/` (keep until upstream hosts a backup;
+  contains `firmware/flash.py` for full-package flashing)
