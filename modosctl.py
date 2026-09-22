@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Small JSON CLI for the Modos Glider API.
 
-The controller protocol currently has a setter but no mode getter.  Therefore
-``status`` reports the last successfully requested mode stored locally; it
-never presents that value as a hardware read-back.
+``status`` reports connection state plus, on firmware new enough to support
+it, the device's actual lightness/contrast and refresh mode read back over
+USB HID. On older firmware it falls back to the last locally requested mode,
+stored in ~/.local/state/modos-eink/state.json, and reports that as
+``modeSource: local-state`` rather than pretending it is hardware read-back.
 
 ``redraw`` forces the device to do a hard full-screen refresh (black to
 white) to clear accumulated ghosting, matching the Dev Kit's third physical
@@ -62,6 +64,23 @@ MODE_DESCRIPTIONS = {
     "FastGrey": "4-level greyscale tuned for responsive typing.",
     "AutoNoDither": "Fast binary while changing, greyscale once settled.",
     "AutoErrorDiffusion": "Fast binary, then Floyd-Steinberg-style greyscale when settled.",
+}
+
+# Tone ranges as enforced by the controller firmware (same steps as the
+# on-screen menu).
+LIGHTNESS_MIN, LIGHTNESS_MAX = -3, 3
+CONTRAST_MIN, CONTRAST_MAX = -1, 6
+
+# Firmware mode ordinals (from caster.h's update_mode_t) to glider-api names.
+_MODE_NAMES_BY_ORDINAL = {
+    0: "ManualLUTNoDither",
+    1: "ManualLUTErrorDiffusion",
+    2: "FastMonoNoDither",
+    3: "FastMonoBayer",
+    4: "FastMonoBlueNoise",
+    5: "FastGrey",
+    6: "AutoNoDither",
+    7: "AutoErrorDiffusion",
 }
 
 
@@ -138,10 +157,10 @@ def require_device() -> tuple[int, list[Path]]:
     return 0, nodes
 
 
-def api() -> tuple[Any, Any, Any]:
+def api() -> tuple[Any, Any, Any, Any]:
     try:
-        from glider_api import Display, DisplayConfig, Mode
-        return Display, DisplayConfig, Mode
+        from glider_api import Display, DisplayConfig, Mode, Tone
+        return Display, DisplayConfig, Mode, Tone
     except ImportError as exc:
         raise RuntimeError(
             "glider_api is not installed for " + sys.executable
@@ -157,21 +176,54 @@ def status() -> int:
     if code:
         return code
     try:
-        Display, DisplayConfig, _Mode = api()
+        Display, DisplayConfig, _Mode, _Tone = api()
+        config = DisplayConfig.glider_standard()
         # Opening verifies hidapi can actually claim the matching USB device.
-        Display.new_with_config(DisplayConfig.glider_standard())
+        display = Display.new_with_config(config)
     except Exception as exc:
         return unavailable("could not open the Modos HID device: " + str(exc), nodes)
     saved = local_state()
-    emit({
+    payload: dict[str, Any] = {
         "ok": True,
         "connected": True,
         "hidraw": [str(node) for node in nodes],
-        "mode": saved.get("mode", "unknown"),
-        "modeSource": "local-state (the current glider-api has no mode getter)",
         "modes": list(MODE_NAMES),
-    })
+        "lightnessRange": [LIGHTNESS_MIN, LIGHTNESS_MAX],
+        "contrastRange": [CONTRAST_MIN, CONTRAST_MAX],
+    }
+    tone = read_tone(display)
+    if tone is not None:
+        payload["tone"] = {"lightness": tone[0], "contrast": tone[1], "source": "device"}
+        mode = read_mode(display)
+        if mode is not None:
+            payload["mode"] = mode
+            payload["modeSource"] = "device"
+        else:
+            payload["mode"] = saved.get("mode", "unknown")
+            payload["modeSource"] = "local-state (device did not report mode)"
+    else:
+        payload["tone"] = None
+        payload["mode"] = saved.get("mode", "unknown")
+        payload["modeSource"] = "local-state (device firmware does not support read-back)"
+    emit(payload)
     return 0
+
+
+def read_tone(display: Any) -> tuple[int, int] | None:
+    """Return (lightness, contrast) read from the device, or None."""
+    try:
+        tone = display.get_tone()
+        return int(tone.lightness), int(tone.contrast)
+    except Exception:
+        return None
+
+
+def read_mode(display: Any) -> str | None:
+    """Return the device's current mode name, or None."""
+    try:
+        return _MODE_NAMES_BY_ORDINAL.get(int(display.get_mode()))
+    except Exception:
+        return None
 
 
 def set_mode(name: str) -> int:
@@ -181,7 +233,7 @@ def set_mode(name: str) -> int:
     if code:
         return code
     try:
-        Display, DisplayConfig, Mode = api()
+        Display, DisplayConfig, Mode, _Tone = api()
         config = DisplayConfig.glider_standard()
         display = Display.new_with_config(config)
         display.set_mode(getattr(Mode, name), config.full_screen())
@@ -192,12 +244,43 @@ def set_mode(name: str) -> int:
     return 0
 
 
+def set_tone(kind: str, value: int) -> int:
+    lo, hi = (LIGHTNESS_MIN, LIGHTNESS_MAX) if kind == "lightness" else (CONTRAST_MIN, CONTRAST_MAX)
+    if not lo <= value <= hi:
+        return unavailable(f"{kind} {value} out of range {lo}..{hi}", find_hidraw())
+    code, nodes = require_device()
+    if code:
+        return code
+    try:
+        Display, DisplayConfig, _Mode, Tone = api()
+        config = DisplayConfig.glider_standard()
+        display = Display.new_with_config(config)
+        current = read_tone(display)
+        lightness, contrast = current if current is not None else (0, 0)
+        if kind == "lightness":
+            lightness = value
+        else:
+            contrast = value
+        # get_tone returns None on older firmware; default to 0 for the
+        # untouched value in that case (matches the OSD power-on defaults).
+        display.set_tone(Tone(lightness, contrast))
+    except Exception as exc:
+        return unavailable(f"could not set {kind} to {value}: " + str(exc), nodes)
+    emit({
+        "ok": True,
+        "connected": True,
+        "tone": {"lightness": lightness, "contrast": contrast, "source": "device"},
+        "modes": list(MODE_NAMES),
+    })
+    return 0
+
+
 def redraw() -> int:
     code, nodes = require_device()
     if code:
         return code
     try:
-        Display, DisplayConfig, _Mode = api()
+        Display, DisplayConfig, _Mode, _Tone = api()
         config = DisplayConfig.glider_standard()
         display = Display.new_with_config(config)
         # Hard full-screen refresh: flashes black->white to clear ghosting.
@@ -215,12 +298,20 @@ def main() -> int:
     sub.add_parser("status", help="emit JSON status")
     mode_parser = sub.add_parser("set-mode", help="set a full-screen refresh mode")
     mode_parser.add_argument("mode", choices=MODE_NAMES)
+    tone_parser = sub.add_parser("set-lightness", help="set lightness (device read-back of the other value)")
+    tone_parser.add_argument("value", type=int)
+    contrast_parser = sub.add_parser("set-contrast", help="set contrast (device read-back of the other value)")
+    contrast_parser.add_argument("value", type=int)
     sub.add_parser("redraw", help="force a hard full-screen refresh to clear ghosting")
     args = parser.parse_args()
     if args.command == "status":
         return status()
     if args.command == "redraw":
         return redraw()
+    if args.command == "set-lightness":
+        return set_tone("lightness", args.value)
+    if args.command == "set-contrast":
+        return set_tone("contrast", args.value)
     return set_mode(args.mode)
 
 

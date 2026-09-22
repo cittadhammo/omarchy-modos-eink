@@ -1,0 +1,225 @@
+# Glider tone control over USB HID — experiment log
+
+Date: 2026-09-22
+Status: **firmware flashed and partially working; screen video path currently dead — stock release 1.1.1 recovery flash in progress**
+Upstream issue: https://github.com/Modos-Labs/glider-api/issues/7
+
+This document records everything we learned, implemented, and tried while adding
+host-controllable lightness/contrast (and state read-back) to the Modos Glider
+controller. It is written so that either of us (or the Modos developers) can pick
+up exactly where we left off.
+
+---
+
+## 1. Goal
+
+The Modos Paper Dev Kit's lightness and contrast can only be changed from the
+physical buttons via the OSD menu. We wanted them scriptable from the host, so
+they can be automated (time-of-day, theme changes) from the
+`omarchy-modos-eink` plugin. Tracked upstream as glider-api issue #7, which we
+filed earlier. With no developer response yet, we attempted the change ourselves —
+the hardware design, gateware, and firmware are all open source.
+
+## 2. What we learned about the system (all verified in source)
+
+Firmware repo: https://github.com/Modos-Labs/Glider (mirror of GitLab
+`zephray/Glider`), default branch `main`.
+
+### 2.1 Where lightness/contrast live
+
+- `fw/User/config.h` — `config_t` has `int lightness;` and `int contrast;`,
+  persisted to the external SPI flash (`config.bin` inside SPIFFS) by
+  `config_save()`. Survives power cycles and re-flash of the MCU firmware.
+- `fw/User/tone_lut.c` — `tone_lut_build_y(lightness, contrast, lut)` builds a
+  256-entry tone LUT. Valid ranges (clamped): lightness −3…+3, contrast −1…+6.
+  These match the OSD menu steps exactly.
+- `fw/User/caster.c` — `caster_set_tone(lightness, contrast)` builds the LUT and
+  streams it to the FPGA (`CSR_TONE_ADDR`/`CSR_TONE_WR`). **Takes effect live,
+  no redraw needed.**
+- Apply path used by the OSD menu (`fw/User/ui.c`): set `config.lightness` /
+  `config.contrast`, `config_save()`, `caster_set_tone(...)`. The serial shell
+  (`fw/User/shell/shell_cmds.c`) also calls `config_save()` from its own task,
+  so flash writes from multiple tasks are established practice.
+
+### 2.2 USB HID protocol (as of upstream `ed94ef7`)
+
+- Control channel: TinyUSB HID generic IN/OUT, report ID 5
+  (`REPORT_ID_CONTROL`), 64-byte reports.
+- Out packet: `[report_id][cmd][param:u16 LE][x0][y0][x1][y1][id:u16][crc16]`
+  — CRC is XMODEM over bytes 1..13 (report ID excluded).
+- In packet (response): byte 0 = report ID, byte 1 = return code
+  (`0x55` success, `0x00` general fail, `0x01` checksum fail), byte 2 = echoed
+  cmd, byte 3 = echoed param LSB, bytes 4–5 echo id, bytes 6–7 = expected CRC.
+  Bytes 8+ were **reserved/zero — free space for getter payloads.**
+- `tud_hid_set_report_cb` in `fw/User/usbapp.c` dispatches commands:
+  `0x00 RESET, 0x01 POWERDOWN, 0x02 POWERUP, 0x03 SETINPUT, 0x04 REDRAW,
+  0x05 SETMODE, 0x06 NUKE, 0x07 USBBOOT, 0x08 RECV`.
+- `tud_hid_get_report_cb` is an unimplemented stub, but the descriptor is a
+  generic IN/OUT — read-back is possible without changing the USB descriptor
+  by writing payload bytes into the response report.
+
+### 2.3 Task model (matters for concurrency)
+
+`startup_task` runs boot (flash ID → SPIFFS → config → video bridges → power →
+UI init) and later becomes the serial shell. Separately created tasks: USB
+device, USB PD, UI (buttons/OSD), key scan, power monitor, housekeeping.
+`config` is a single global `config_t` shared by all of them.
+
+## 3. What we implemented
+
+Repo: `~/Github/Glider`, branch `usb-tone-control`, commit `511ad59` (local
+only, never pushed). Host side: `~/Github/glider-api` (uncommitted working
+tree) + the plugin (modosctl.py, Service.qml, Panel.qml — also local only).
+
+### 3.1 New firmware commands
+
+| Value | Name | Direction | Payload |
+|---|---|---|---|
+| `0x09` | `SETLIGHTNESS` | host→dev | `param` = signed int16, clamped/validated −3…+3 |
+| `0x0A` | `SETCONTRAST` | host→dev | `param` = signed int16, validated −1…+6 |
+| `0x0B` | `GETTONE` | dev→host | response byte 8 = lightness (i8), byte 9 = contrast (i8) |
+| `0x0C` | `GETMODE` | dev→host | response byte 8 = mode ordinal (`update_mode_t`) |
+| `0x0D` | `GETSIGNAL` | dev→host | response byte 8 = raw input-status byte |
+
+- New return code `USBRET_BADVALUE = 0x02` for out-of-range tone values.
+- Setters run the OSD's exact apply path (`config_save()` +
+  `caster_set_tone()`), guarded by a new `usb_tone_lock` mutex, because the OSD
+  and shell also touch these fields (all from separate tasks).
+- Getters are collected in the callback and stamped into the response's
+  reserved bytes (8/9). The HID report descriptor is **unchanged**.
+- `GETMODE` reads `config.update_mode`, which the UI keeps current (menu
+  commits, K1 cycling). A `usbapp_mode_changed` volatile flag lets the UI task
+  re-sync its own mode index when the *host* changes the mode, so the K1
+  "next mode" button doesn't restart from a stale index.
+
+### 3.2 Host side (glider-api + plugin)
+
+- `Tone` pyclass/C struct (lightness, contrast i8), `Display.set_tone()` —
+  range-checked client-side, sends SETLIGHTNESS then SETCONTRAST —,
+  `Display.get_tone()`, `Display.get_mode()`, `Display.get_signal_status()`,
+  C API `glider_set_tone/glider_get_tone/glider_get_mode/
+  glider_get_signal_status`, new `parse_response` code 0x02 mapping.
+  13 cargo tests pass (packet layout regression tests added for the new
+  commands). Venv binding rebuilt.
+- `modosctl.py`: new `set-lightness N` / `set-contrast N` subcommands (they
+  read back the untouched value first, so the pair always stays consistent),
+  `status` now reports `tone` and device read-back `mode` when firmware
+  supports it, with graceful fallback (`tone: null`,
+  `modeSource: "local-state ..."`) on stock firmware.
+- Plugin UI: TONE section in the panel with themed −/+ steppers; steppers are
+  hidden (and values shown as `—`) until the device answers a GETTONE, so
+  nothing looks broken on stock firmware. Service.qml clamps to the device's
+  advertised ranges and optimistically updates before the helper confirms.
+
+## 4. Build and flash — what worked
+
+- **CubeIDE 2.2.0's newer GCC breaks the upstream `usbpd` stack**
+  (`DECLARE_HOOK`/`DECLARE_DEFERRED` macros, `return;` in non-void — GCC 14
+  hard-errors on these). **CubeIDE 2.0.0 (as the docs pin) builds clean:
+  0 errors, ~55 pre-existing warnings.** Build:
+  `STM32CUBEIDE_BIN=/opt/st/stm32cubeide_2.0.0/stm32cubeide scripts/build_mcu.sh dev build/dev/mcu`
+  → `glider_ec_rtos_dev.bin` (111904 bytes; fits the 128 KB internal flash).
+- Flash: hold K1 (button nearest USB-C) while plugging in → device shows as
+  `0483:df11`; then
+  `dfu-util -a 0 -i 0 -s 0x08000000:leave -D glider_ec_rtos_dev.bin`.
+  The final "Error during download get_status" after `:leave` is benign
+  (device reboots mid-poll). Needs udev rule for `0483:df11` (see §7).
+- First boot after DFU-exit re-enumerates as `1209:ae86` but the user reports
+  a full unplug/replug is normally needed to start video; treat DFU-exit as
+  not-final.
+
+## 5. What worked with our firmware (verified on hardware)
+
+- `GETTONE` returns the true persisted values: `{lightness: 1, contrast: 0}`
+  — values previously set from the OSD menu, read back over USB. ✔
+- `GETMODE` returns the real current mode (`FastMonoBlueNoise`,
+  `modeSource: "device"`). ✔ — this retires the plugin's local-state
+  workaround entirely.
+- `GETSIGNAL` works (used in debugging; see §6). ✔
+- Serial console, HID, shell all alive; config reads intact (full 1600×1200
+  timing from `setcfg get`). ✔
+
+## 6. What failed and the debugging timeline
+
+1. `set-lightness -1` was **accepted** (device echoed `USBRET_SUCCESS` and the
+   value) but a later read-back still returned the old value → the state
+   change didn't stick.
+2. User unplugged/replugged (their normal cold-boot flow) → **screen now
+   completely dead**; buttons unresponsive; **green heartbeat LED still
+   blinking** (green = normal per USAGE.md; red = fault).
+3. Diagnostics gathered (`/tmp/shellcmd.py`, `/tmp/shellsession.py`,
+   `/tmp/bootlisten.py` helpers talk to `/dev/ttyACM0` at 115200):
+   - `ver` → our build (0.1, Sep 22 2026 18:37:38, Git ed94ef7). Shell alive.
+   - `power` → `state: active`, no suspend. Not a suspend issue.
+   - `syslog` is a *live/incremental* log (new lines only). Successive reads
+     advanced through the boot log one line at a time:
+     `System starting` → `Serial number: 0036004a...` →
+     `Delay loop calibrated` → `SPI Flash Mfg ID: ef` … then no further
+     progress lines on the final long read.
+   - Full correct panel config from `setcfg get` proves config load worked at
+     some point; `GETSIGNAL` returns 0x00 (no LOST/RESET bits).
+4. Working hypothesis (unproven): boot never reaches FPGA bitstream load /
+   video init, or wedged somewhere in external-flash write state after the
+   `config_save()` triggered by the failed set. A 60 s full power drain did
+   **not** recover it. The MCU and USB are healthy; the display/video path is
+   not driving.
+
+   Note on timing: the USB SETMODE/REDRAW path (`caster_setmode`,
+   `caster_redraw`) has always run fine from the USB task context. The
+   difference with our new commands is `config_save()` (SPIFFS erase/write on
+   the external flash) in the same context — consistent with the failure, but
+   **not yet proven**; possible also that a latent upstream bug (e.g. in
+   `config_validate_loaded` / SPIFFS) was triggered.
+
+## 7. Recovery
+
+Rollback is always possible: the DFU bootloader is in the STM32 ROM and cannot
+be erased by software.
+
+1. Download the stock binary release in a **browser** (GitLab uploads are
+   Cloudflare-protected against CLI tools):
+   `https://gitlab.com/zephray/glider/-/uploads/63c7b2bdcb3b12bd8a076e5501182a45/1.1.1.tar.gz`
+2. Extract; inside is `glider_ec_rtos.bin` (+ FPGA bitstreams, fonts, config —
+   we only need the MCU bin; our config.bin on the device is intact).
+3. Hold K1 while plugging in (DFU), then
+   `dfu-util -a 0 -i 0 -s 0x08000000:leave -D glider_ec_rtos.bin`.
+4. Unplug/replug normally.
+
+udev rules needed on the host (installed):
+
+```
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="df11", MODE="0666", TAG+="uaccess"
+```
+
+(the plugin's existing `69-modos-glider.rules` already covers `1209:ae86`)
+
+Serial port access for debugging: `sudo chmod 666 /dev/ttyACM0` (resets on
+replug) or a udev rule for the CDC ACM interface.
+
+## 8. Next steps
+
+- [ ] Flash stock 1.1.1 → confirm screen recovers (isolates our build).
+- [ ] If it recovers: bisect our firmware — first flash = our build with
+      `config_save()` removed from the tone setters (defer saves, or bounce
+      them to the UI/housekeeping task via a flag) → retest set-lightness.
+- [ ] If stock also fails with the same symptom: the problem predates our
+      build — suspect external flash/config state; try
+      `setres 13.3 1600 1200 75 cvt-rb2` + `setcfg save` from the serial
+      shell, or re-flash config via `flash.py`.
+- [ ] Whatever the outcome: report findings (firmware patch, protocol,
+      debugging data) on glider-api issue #7; the command design itself
+      (ranges, response byte layout) is worth keeping regardless.
+- [ ] Host-side work (glider-api, modosctl, plugin UI) is complete and
+      backwards-compatible — it degrades gracefully on stock firmware and
+      needs no further changes unless the wire format changes in review.
+
+## 9. Artifacts
+
+- `~/Github/Glider` branch `usb-tone-control`, commit `511ad59` (firmware patch)
+- `~/Github/glider-api` working tree (Tone + setters/getters + tests; uncommitted)
+- plugin: `modosctl.py`, `Service.qml`, `Panel.qml` (tone support; live in
+  `~/.config/omarchy/plugins/cittadhammo.modos-eink/`)
+- debug helpers: `/tmp/shellcmd.py`, `/tmp/shellsession.py`,
+  `/tmp/bootlisten.py` (serial console tools; recreate from this doc if lost)
+- build log: `/tmp/mcu-build-2.0.0.log`
+- stock release: `/tmp/glider-stock/` (once downloaded)

@@ -10,6 +10,12 @@ Item {
   property var shell: null
   property bool connected: false
   property string currentMode: "unknown"
+  property string modeSource: ""
+  property int lightness: 0
+  property int contrast: 0
+  property bool toneAvailable: false
+  property var lightnessRange: [-3, 3]
+  property var contrastRange: [-1, 6]
   property string lastError: "Checking Modos display…"
   property var modes: []
   property var modeLabels: ({})
@@ -41,6 +47,17 @@ Item {
       if (Array.isArray(result.modes)) modes = result.modes
       if (result.modeLabels && typeof result.modeLabels === "object") modeLabels = result.modeLabels
       if (result.modeDescriptions && typeof result.modeDescriptions === "object") modeDescriptions = result.modeDescriptions
+      if (Array.isArray(result.lightnessRange) && result.lightnessRange.length === 2) lightnessRange = result.lightnessRange
+      if (Array.isArray(result.contrastRange) && result.contrastRange.length === 2) contrastRange = result.contrastRange
+      if (result.tone && typeof result.tone === "object") {
+        toneAvailable = true
+        lightness = parseInt(result.tone.lightness, 10)
+        contrast = parseInt(result.tone.contrast, 10)
+      } else if (result.ok === true) {
+        // Firmware without tone read-back keeps the last known values.
+        toneAvailable = false
+      }
+      if (result.modeSource) modeSource = String(result.modeSource)
       if (result.ok === true) {
         if (result.mode) currentMode = String(result.mode)
         lastError = ""
@@ -67,6 +84,36 @@ Item {
     _actionOutput = ""
     _actionError = ""
     actionProcess.command = [helperPath, "set-mode", String(mode)]
+    actionProcess.running = true
+  }
+
+  function clampInt(value, range) {
+    var lo = parseInt(range[0], 10)
+    var hi = parseInt(range[1], 10)
+    return Math.max(lo, Math.min(hi, Math.round(value)))
+  }
+
+  // Optimistically applies the new value, then confirms via the helper's
+  // device read-back (a failed run falls back to the next status poll).
+  function setLightness(value) {
+    if (actionProcess.running) return
+    var v = clampInt(value, lightnessRange)
+    if (toneAvailable && v === lightness) return
+    lightness = v
+    _actionOutput = ""
+    _actionError = ""
+    actionProcess.command = [helperPath, "set-lightness", String(v)]
+    actionProcess.running = true
+  }
+
+  function setContrast(value) {
+    if (actionProcess.running) return
+    var v = clampInt(value, contrastRange)
+    if (toneAvailable && v === contrast) return
+    contrast = v
+    _actionOutput = ""
+    _actionError = ""
+    actionProcess.command = [helperPath, "set-contrast", String(v)]
     actionProcess.running = true
   }
 

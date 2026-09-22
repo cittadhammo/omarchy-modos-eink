@@ -17,6 +17,33 @@ Panel {
   readonly property string currentMode: service ? String(service.currentMode || "unknown") : "unknown"
   readonly property var modes: service && Array.isArray(service.modes) ? service.modes : []
 
+  // One −/+ stepper button, themed like the mode rows.
+  component StepperButton : BorderSurface {
+    id: stepper
+    property string glyph: "+"
+    property var onStep: null
+    width: Style.space(30)
+    implicitHeight: Style.space(30)
+    radius: Style.cornerRadius
+    property bool hovered: stepperArea.containsMouse
+    color: hovered ? Style.hoverFillFor(root.foreground, Color.accent) : "transparent"
+    borderSpec: Border.controlSpec(hovered ? "hover-cursor" : "normal", root.foreground, Color.accent)
+    Text {
+      anchors.centerIn: parent
+      text: stepper.glyph
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.body
+    }
+    MouseArea {
+      id: stepperArea
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: if (stepper.onStep) stepper.onStep()
+    }
+  }
+
   // Human label (device-menu style) plus the underlying technical enum name.
   // glider-api has no authoritative enum<->preset table, so both are shown.
   function labelFor(mode) {
@@ -98,7 +125,10 @@ Panel {
               font.bold: true
             }
             Text {
-              text: root.currentMode === "unknown" ? "Current mode is not known yet" : "Current mode: " + root.labelFor(root.currentMode)
+              text: root.currentMode === "unknown" ? "Current mode is not known yet"
+                : "Current mode: " + root.labelFor(root.currentMode)
+                  + ((root.service && String(root.service.modeSource || "").indexOf("local-state") === 0)
+                    ? " (local state)" : "")
               color: Qt.darker(root.foreground, 1.45)
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
@@ -216,6 +246,70 @@ Panel {
           color: Color.urgent
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
+        }
+
+        Text {
+          text: "TONE"
+          color: Qt.darker(root.foreground, 1.45)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          font.letterSpacing: 1
+        }
+
+        Repeater {
+          model: [
+            { kind: "lightness", label: "Lightness" },
+            { kind: "contrast", label: "Contrast" }
+          ]
+          delegate: Row {
+            id: toneRow
+            required property var modelData
+            width: content.width
+            spacing: Style.space(8)
+            property bool isLightness: modelData.kind === "lightness"
+            property bool toneReady: root.service && root.service.toneAvailable
+            property int value: root.service
+              ? (isLightness ? root.service.lightness : root.service.contrast) : 0
+
+            Text {
+              text: toneRow.modelData.label
+                + (toneRow.toneReady ? "" : " (read-back unavailable)")
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              anchors.verticalCenter: parent.verticalCenter
+              width: content.width - Style.space(120)
+            }
+
+            StepperButton {
+              glyph: "−"
+              visible: toneRow.toneReady
+              anchors.verticalCenter: parent.verticalCenter
+              onStep: root.service && (toneRow.isLightness
+                ? root.service.setLightness(root.service.lightness - 1)
+                : root.service.setContrast(root.service.contrast - 1))
+            }
+
+            Text {
+              text: toneRow.toneReady ? toneRow.value : "—"
+              color: Qt.darker(root.foreground, 1.45)
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+              horizontalAlignment: Text.AlignHCenter
+              width: Style.space(36)
+              anchors.verticalCenter: parent.verticalCenter
+            }
+
+            StepperButton {
+              glyph: "+"
+              visible: toneRow.toneReady
+              anchors.verticalCenter: parent.verticalCenter
+              onStep: root.service && (toneRow.isLightness
+                ? root.service.setLightness(root.service.lightness + 1)
+                : root.service.setContrast(root.service.contrast + 1))
+            }
+          }
         }
       }
     }
