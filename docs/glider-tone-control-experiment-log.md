@@ -546,11 +546,13 @@ Build: 0 errors / 54 warnings; flashed; `ver` reports
 `FastMonoNoDither` — the persisted Browsing was accepted for the first
  time.
 
-## Test protocol (user, pending)
+## Test protocol (user, all passed — 2026-09-23)
 
-1. Panel → Browsing, wait a few seconds (save coalesces), unplug/replug
-   → must come back sharp no-dither, panel steady on Browsing.
-2. Repeat for Watching / Typing / Reading — all must survive.
-3. Repeat the flaky case twice more for confidence.
-4. (Then restore user's preferred daily mode.)
+1. Panel → Browsing, unplug/replug → **comes back sharp no-dither, panel
+   steady on Browsing** ✅ (previously 100% reproducible failure)
+2. All modes survive replug ✅
+3. Repeated replugs consistent ✅
+
+User verdict: "good it all works". The upstream issue report for the
+config-validation bug is drafted in the section above, ready to file.
 
