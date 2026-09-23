@@ -1,8 +1,9 @@
 # Modos E-Ink Omarchy plugin
 
-This plugin controls the refresh mode of a Modos Paper Dev Kit 13-inch display
-through the Caster/Glider controller's USB HID interface. USB-C DisplayPort Alt
-Mode remains the video path; the HID interface is a separate control path.
+This plugin controls the refresh mode and the tone (lightness / contrast) of a
+Modos Paper Dev Kit 13-inch display through the Caster/Glider controller's USB
+HID interface. USB-C DisplayPort Alt Mode remains the video path; the HID
+interface is a separate control path.
 
 The plugin is written for Omarchy 4 (Quattro) and its single long-lived
 `omarchy-shell` Quickshell process. It declares one headless service and one bar
@@ -10,24 +11,37 @@ widget. The service owns the helper process, device state, and polling. The bar
 widget renders the compact status label and hosts the panel used to choose a
 mode.
 
-## Screenshot
+## Screenshots
+
+The panel with mode picker and tone steppers (captured on the e-ink panel
+itself):
+
+![Modos E-Ink omarchy panel with tone control](screenshots/modos-plugin.png)
+
+Earlier panel screenshot:
 
 ![Modos E-Ink omarchy widget](screenshots/panel.png)
 
 ## Current behavior
 
-The bar label is an e-ink glyph followed by the last mode successfully selected.
-The current upstream API has no command for reading the controller's mode back,
-so this value is persisted locally in
-`~/.local/state/modos-eink/state.json`. It is explicitly reported as
-`modeSource: local-state` by the helper rather than being presented as hardware
-read-back.
+The bar label is an e-ink glyph followed by the display's actual refresh mode.
+The helper reads mode, lightness and contrast straight from the controller over
+USB HID (`GETMODE` / `GETTONE` commands) and reports `modeSource: "device"` and
+`tone.source: "device"`. On stock Glider firmware, which cannot answer these
+queries, it transparently falls back to a local note in
+`~/.local/state/modos-eink/state.json` and honestly labels the source
+`local-state` instead of pretending it is hardware read-back.
 
 Interactions are intentionally simple:
 
 - Left-click opens the panel. The panel shows the current option, every
   available mode (human label plus technical name), and a short explanation.
   Click a row to apply it.
+- The panel's TONE section shows the device's current lightness and contrast
+  with −/+ steppers. A click applies the change instantly through the same
+  tone LUT the OSD menu uses — the image updates in place with no redraw
+  flash. Changes are persisted in the controller's config flash and survive
+  power cycles; rapid clicks coalesce into a single flash write.
 - Right-click forces a hard full-screen redraw (black-to-white flash) to clear
   ghosting — the same behaviour as the Dev Kit's third physical button. It does
   not change the refresh mode.
@@ -52,7 +66,7 @@ hover state, selection state, and popup surface follow the active theme.
 | `manifest.json` | Omarchy schemaVersion 1 manifest; service + bar-widget kinds. |
 | `Service.qml` | Long-lived singleton; polls `modosctl status` every 15 seconds, runs mode changes, and forces redraws. |
 | `BarWidget.qml` | Compact bar label, click handling, and `Panel.qml` loader. |
-| `Panel.qml` | Theme-aware mode picker with human + technical names and keyboard navigation. |
+| `Panel.qml` | Theme-aware mode picker with human + technical names, keyboard navigation, and tone steppers. |
 | `modosctl` | Launcher that prefers the documented Python virtualenv. |
 | `modosctl.py` | VID/PID detection, JSON status, glider-api mode setter, and full-screen redraw. |
 | `udev/69-modos-glider.rules` | Persistent non-root access for the raw HID node. |
@@ -91,12 +105,15 @@ and the Tom's Hardware hands-on (`Browsing` = binary + edge-detected text,
 table exists, so the panel always shows the enum name as a secondary line
 rather than presenting the label as the device's exact read-out.
 
-The API does not currently expose contrast, brightness/lightness, gamma, or a
-front-light/backlight control (confirmed against `src/lib.rs`, the generated
-`include/glider-api.h`, and every open branch of the Modos-Labs repo). This
-13-inch monochrome Dev Kit has no front light, so no such control is shown and
-none would function. A mode getter is also absent, so the plugin does not
-invent read-back for those values.
+The API did not historically expose contrast, brightness/lightness, gamma, or
+mode read-back. The plugin author implemented these — `get_mode`, `get_tone`,
+`set_tone` and `get_signal_status` — in a [fork branch of glider-api](https://github.com/cittadhammo/glider-api/tree/tone-control)
+together with matching firmware commands (`GETTONE`/`GETMODE`/`GETSIGNAL`,
+`SETLIGHTNESS`/`SETCONTRAST`); the work is proposed upstream (Modos-Labs
+glider-api issue #7). Until a pin incorporating it is published, this plugin
+targets the `tone-control` branch of the fork and degrades gracefully to
+`local-state` behavior on stock firmware. This 13-inch monochrome Dev Kit has
+no front light, so no such control is shown and none would function.
 
 ## Installation
 
@@ -112,18 +129,20 @@ the Python extension into the venv used by the included launcher:
 
 ```sh
 sudo pacman -S --needed rust pkgconf
-git clone https://github.com/Modos-Labs/glider-api ~/github/glider-api
-git -C ~/github/glider-api checkout b80cd7ed2ea16b5f93800ba1fb4ea75465acf04d
+git clone https://github.com/cittadhammo/glider-api ~/github/glider-api
+git -C ~/github/glider-api checkout fcf04da93735395b4da28ee81a00d3a33e3aa33a
 python3 -m venv ~/.local/share/modos-eink/venv
 PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 \
   ~/.local/share/modos-eink/venv/bin/pip install ~/github/glider-api
 ```
 
-The `git checkout` line pins `glider-api` to an immutable commit SHA so every
-install builds exactly the code this plugin was reviewed against. To update
-`glider-api` later, move the pin forward deliberately: checkout a newer commit
-in that repository, rerun the `pip install` above, retest, and bump the SHA in
-this file and in `modosctl.py`.
+The `git checkout` line pins `glider-api` to an immutable commit SHA (the
+plugin author's `tone-control` branch, which adds tone control and state
+read-back — pending upstream review; swap to an upstream pin once it merges)
+so every install builds exactly the code this plugin was reviewed against. To
+update `glider-api` later, move the pin forward deliberately: checkout a newer
+commit in that repository, rerun the `pip install` above, retest, and bump the
+SHA in this file and in `modosctl.py`.
 
 The compatibility flag is needed on Python 3.14 and later, which is newer than
 the PyO3 0.24 version guard (which stops at Python 3.13). A Python 3.13
@@ -174,16 +193,33 @@ diagnostic on stderr when it fails. Exit status is zero only for success.
 ```sh
 ~/.config/omarchy/plugins/cittadhammo.modos-eink/modosctl status
 ~/.config/omarchy/plugins/cittadhammo.modos-eink/modosctl set-mode FastGrey
+~/.config/omarchy/plugins/cittadhammo.modos-eink/modosctl set-lightness -1
+~/.config/omarchy/plugins/cittadhammo.modos-eink/modosctl set-contrast 2
 ~/.config/omarchy/plugins/cittadhammo.modos-eink/modosctl redraw
 ~/.config/omarchy/plugins/cittadhammo.modos-eink/modosctl status
 ```
 
 `status` checks the VID/PID, verifies read/write access to the matching
-`/dev/hidraw*` node, imports `glider_api`, and opens the HID device. `set-mode`
-uses the full-screen rectangle from `DisplayConfig.glider_standard()` and only
-writes the state file after the API call succeeds. `redraw` calls the API's
+`/dev/hidraw*` node, imports `glider_api`, and opens the HID device. It then
+reports `mode`, `modeSource`, `tone` (with its `source`) and the supported
+ranges. `set-mode` uses the full-screen rectangle from
+`DisplayConfig.glider_standard()`. `set-lightness` (−3…+3) and `set-contrast`
+(−1…+6) send the new HID commands and echo the device's read-back of the
+untouched companion value. `redraw` calls the API's
 `Display.redraw(full_screen())` — a hard black-to-white flash that clears
-ghosting without touching the mode — and never writes state.
+ghosting without touching the mode.
+
+### Firmware requirements
+
+The mode/tone read-back and the tone setters need the matching firmware
+commands in the Glider controller. They are implemented, hardware-validated
+and documented in the plugin author's fork:
+[`cittadhammo/Glider` branch `usb-tone-control-setters`](https://github.com/cittadhammo/Glider/tree/usb-tone-control-setters)
+(built on upstream GitLab `main` at `16bdb70c`, plus a fix for an upstream
+`config_save()` bug that silently dropped persisted settings — see
+`docs/glider-tone-control-experiment-log.md` in this repository). On stock
+firmware the plugin still works: mode setting, redraw, and honest
+`local-state` reporting, with the tone steppers hidden rather than broken.
 
 Expected failure messages identify one of: missing device, missing HID ACL,
 missing Python binding, unknown mode, or a controller/API communication error.
