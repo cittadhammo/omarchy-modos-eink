@@ -130,7 +130,7 @@ the Python extension into the venv used by the included launcher:
 ```sh
 sudo pacman -S --needed rust pkgconf
 git clone https://github.com/cittadhammo/glider-api ~/github/glider-api
-git -C ~/github/glider-api checkout fcf04da93735395b4da28ee81a00d3a33e3aa33a
+git -C ~/github/glider-api checkout 64fe38c59b13e3cbdff415a94708daa5d81edb10
 python3 -m venv ~/.local/share/modos-eink/venv
 PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 \
   ~/.local/share/modos-eink/venv/bin/pip install ~/github/glider-api
