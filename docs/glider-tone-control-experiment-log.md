@@ -553,6 +553,9 @@ Build: 0 errors / 54 warnings; flashed; `ver` reports
 2. All modes survive replug ✅
 3. Repeated replugs consistent ✅
 
-User verdict: "good it all works". The upstream issue report for the
-config-validation bug is drafted in the section above, ready to file.
+User verdict: "good it all works". Filed upstream as
+[Modos-Labs/Glider#23](https://github.com/Modos-Labs/Glider/issues/23)
+(2026-09-23, agent-drafted with disclosure at the top, on behalf of the
+user), mentioning PR #22 and offering a standalone tiny PR for the
+validation fix alone.
 
