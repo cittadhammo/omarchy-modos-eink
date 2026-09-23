@@ -21,7 +21,7 @@ Panel {
   component StepperButton : BorderSurface {
     id: stepper
     property string glyph: "+"
-    property var onStep: null
+    signal step()
     width: Style.space(30)
     implicitHeight: Style.space(30)
     radius: Style.cornerRadius
@@ -40,7 +40,7 @@ Panel {
       anchors.fill: parent
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
-      onClicked: if (stepper.onStep) stepper.onStep()
+      onClicked: stepper.step()
     }
   }
 
