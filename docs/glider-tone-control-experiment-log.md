@@ -254,3 +254,101 @@ Nothing has been pushed anywhere, per the ground rule for this experiment.
 - build log: `/tmp/mcu-build-2.0.0.log`
 - stock release: `~/Github/1.1.1/` (keep until upstream hosts a backup;
   contains `firmware/flash.py` for full-package flashing)
+
+---
+
+# Round 2 (2026-09-23): getters on the fixed upstream base — success
+
+## What changed the diagnosis
+
+The GitHub mirror's `main` is NOT the upstream head. GitLab (`zephray/glider`)
+is two commits ahead of the round-1 base (`ed94ef7`):
+
+| Commit | Subject | Relevance |
+|---|---|---|
+| `42eabe1` | Log video input fallback diagnostics | also bumps the **Caster submodule** (`2f714ab` → `de58ccf`) |
+| `16bdb70` | Fix EDID conformity; fix TMDS handling | 89 lines in `adv7611.c` (HDMI/TMDS receiver), 158 lines in `edid.c` — the exact video-input path that died in round 1 |
+
+Stock 1.1.1 is built from `16bdb70`. Round 1's build predated the EDID/TMDS
+fixes and the Caster bump — very plausibly the real cause of the round-1
+freeze (screen blank, DP-3 "connected" but no monitor, USB alive), rather
+than (or in addition to) the in-context `config_save()` theory.
+
+## Branch restructuring
+
+- `usb-tone-control` **rebased** onto `gitlab/main`; rebased cleanly (the
+  upstream `ui.c` changes and ours touch different regions).
+- Slimmed to **getters-only** — `SETLIGHTNESS`/`SETCONTRAST` and the
+  `USBRET_BADVALUE` definition were removed; `GETTONE`/`GETMODE`/`GETSIGNAL`
+  and the SETMODE re-sync remain. Result: commit `39d8289`.
+- The full round-1 (setters) version is preserved as `usb-tone-control-full`.
+- Submodule `Caster` aligned to `de58ccf` as required by the new base.
+
+## Round 2 flash results
+
+- Host tests pass; CubeIDE 2.0.0 build: 0 errors, 55 warnings (same as stock).
+- Getters-only build flashed → video works, **unplug/replug cycles restore
+  video cleanly** (the round-1 killer scenario, now passed repeatedly).
+- Getters verified live: `get_tone` → lightness/contrast, `get_mode` →
+  AutoNoDither, `get_signal_status` → 0x3c. Read-back values track OSD/menu
+  changes and survive replugs.
+
+## New bug found: `config_save()` never persisted anything
+
+User reported tone changes (OSD menu) not surviving reboots — on the
+getters-only build, which never writes config. Investigation via a
+diagnostic-shell build (see below) and reading `fw/User/config.c`:
+
+`config_save()` opened `config.bin` with `O_CREAT|O_TRUNC|O_WRONLY`, wrote,
+**and never called `SPIFFS_close()`**. Consequences, all on stock firmware:
+
+1. SPIFFS buffers writes in RAM; flash is only written on close. Unless a
+   cache page happened to be evicted, the config write never reached flash —
+   settings died at power-off. (Matches: device always booted lightness +1,
+   the last value saved before the leak began... or factory-era luck.)
+2. Every save leaked one of the 32 fd slots; eventually all saves failed
+   silently (the function returned without logging).
+
+Fix (`8bc935e`): close the file, check write result, log failures via
+`syslog_printf`. Verified end-to-end: OSD tone change → read-back via
+`get_tone` → `setcfg save` (shell) → `fs dump config.bin` shows content →
+unplug/replug → device boots with the changed values (lightness 0,
+contrast 1). Persistence now works for the first time.
+
+Note: round 1's "config_save in USB context" theory is weakened — stock's
+own `USBCMD_SETINPUT` handler also calls `config_save()` in USB context.
+The setters remain unproven on hardware and stay deferred to round 3 with
+the deferred-save design regardless.
+
+## Diagnostic shell build
+
+`GLIDER_DIAGNOSTIC_SHELL` (opt-in in `shell.c`) adds `fs ls/df/dump/format`,
+`mem`, `i2c_probe`, `recv/send` (XMODEM/YMODEM), `sensor`, `setvolt`. It is
+NOT defined in any build config by default. For this round we added the
+define to `fw/.cproject` temporarily, built `dev2diag`, and reverted the
+`.cproject` afterwards (the flag is not committed). The device currently
+runs the diagnostic build — functionally identical plus maintenance shell.
+Re-flash a lean build before any long-term use if desired.
+
+Caution learned: the FPGA bitstream (`fpga.bit`), fonts and `config.bin`
+live in the **same SPIFFS** — `fs format` would require re-flashing the
+bitstream afterwards (stock 1.1.1 tarball at `~/Github/1.1.1/` works).
+
+## Housekeeping
+
+- All three repos' work branches are on GitHub: `cittadhammo/omarchy-modos-eink`
+  (`tone-control`), forks `cittadhammo/glider-api` (`tone-control`) and
+  `cittadhammo/Glider` (`usb-tone-control`, `usb-tone-control-full`).
+- Serial console access: user added to `uucp` group (chmod 666 no longer
+  needed after re-login); `/tmp/shellcmd.py` recreates the one-shot console
+  helper (send command, print response).
+
+## Round 3 plan (setters)
+
+1. Re-add SETLIGHTNESS/SETCONTRAST on top of the getters commit.
+2. Apply tone via LUT immediately, but **defer `config_save()` out of the
+   USB handler** (flag for the config/caster context) — by design, not guess.
+3. Same gentle test ladder: build → flash → video first → one setter →
+   read-back → replug → reboot persistence.
+4. Consider reporting upstream (issue #7): getters + the `config_save`
+   bug fix are directly valuable to the project.
