@@ -372,3 +372,65 @@ Test ladder, all passed:
 
 Plugin `master` merged the `tone-control` branch: panel now shows device
 read-back tone/mode (`source: "device"`) and the tone steppers are live.
+
+---
+
+# Round 4 (2026-09-23): auto-clear control — success
+
+Motivation: the Auto Clear settings (the most e-ink-native group in the OSD)
+were the biggest remaining OSD-only feature. Branch `usb-ac-control`
+(firmware `7392721`, glider-api `7337ccc`, plugin `8bca06e`) — all pushed
+only after the user's live test pass.
+
+## Firmware
+
+Four new HID commands mirroring the OSD's Auto Clear submenu:
+
+| Command | Value | Behavior |
+|---|---|---|
+| `SETACMODE` | `0x0E` | 0=Off, 1=Adaptive, 2=Fixed (range-validated) |
+| `SETACINTERVAL` | `0x0F` | 0=1 min, 1=5 min, 2=15 min |
+| `SETACTHRESHOLD` | `0x10` | 0=Sometimes, 1=Occasionally, 2=Often |
+| `GETAC` | `0x11` | All three in reserved response bytes 8/9/10 |
+
+Apply path: setters write `config`, raise `usbapp_ac_changed`, and defer the
+flash write via `config_request_save()`; the UI task consumes the flag at the
+top of its loop, re-syncs its local `autoclear` mirror and resets the
+timers/counters — identical pattern to `usbapp_mode_changed` (round 3).
+Build 0 errors / 55 warnings (stock count), host tests pass.
+
+## Host side
+
+glider-api `ac-control`: `AutoClear` pyclass + `get_autoclear()` /
+`set_autoclear()` (all fields range-checked client-side too), packet-layout
+tests, 15/15 pass. Plugin: `modosctl set-autoclear <field> <label>` reads the
+two untouched fields back from the device first (OSD-equivalent semantics);
+`status` reports `autoclear` + `autoclearAvailable`; the panel shows the AC
+section only when the firmware answers `GETAC`.
+
+## UI evolution (user-driven)
+
+First design (one row per setting with a ⟳ cycle button) was rejected:
+too tall on the 1600×1200 panel, options invisible, symbol unclear.
+Final design: every option rendered as a small clickable chip with the
+active one highlighted; interval row only in Fixed mode, threshold row only
+in Adaptive; both tone steppers share one line (Contrast right-aligned);
+all rows share one `labelColumnWidth` so controls start vertically aligned.
+Section title dropped entirely.
+
+## Testing (all passed, user hands + agent scripts)
+
+- Flash → video back; `GETAC` baseline = Adaptive/5 min/Occasionally (defaults).
+- Setter ladder: each field flipped and read back, restored, device alive.
+- User tests: (1) Fixed/1-min produces a visible once-a-minute refresh;
+  (2) chips ↔ OSD round-trip agrees within one poll; (3) adaptive clears
+  behave as before; (4) unplug/replug boots with the saved AC values;
+  (5) rapid chip clicking — no hiccup.
+- **Bug found in user testing:** adding `AutoClear` to `modosctl.api()`'s
+  return tuple (4→5) broke `set_tone`/`set_mode` call sites that still
+  unpacked 4 values ("too many values to unpack, expected 4, got 5").
+  Root cause: my smoke tests exercised only the new paths + status, not the
+  tone/mode setters. Fix trivial; afterwards all six CLI commands were
+  exercised green. Lesson recorded: when changing a shared helper's
+  signature, exercise every consumer.
+

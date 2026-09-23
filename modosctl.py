@@ -71,6 +71,12 @@ MODE_DESCRIPTIONS = {
 LIGHTNESS_MIN, LIGHTNESS_MAX = -3, 3
 CONTRAST_MIN, CONTRAST_MAX = -1, 6
 
+# Auto Clear settings as enforced by the controller firmware (mirrors the
+# OSD's Auto Clear submenu). Index = the value sent over HID.
+AC_MODES = ("Off", "Adaptive", "Fixed")
+AC_INTERVALS = ("1 min", "5 min", "15 min")
+AC_THRESHOLDS = ("Sometimes", "Occasionally", "Often")
+
 # Firmware mode ordinals (from caster.h's update_mode_t) to glider-api names.
 _MODE_NAMES_BY_ORDINAL = {
     0: "ManualLUTNoDither",
@@ -125,6 +131,9 @@ def write_state(mode: str) -> None:
 def emit(payload: dict[str, Any]) -> None:
     payload.setdefault("modeLabels", MODE_LABELS)
     payload.setdefault("modeDescriptions", MODE_DESCRIPTIONS)
+    payload.setdefault("acModes", AC_MODES)
+    payload.setdefault("acIntervals", AC_INTERVALS)
+    payload.setdefault("acThresholds", AC_THRESHOLDS)
     print(json.dumps(payload, separators=(",", ":")))
 
 
@@ -157,10 +166,10 @@ def require_device() -> tuple[int, list[Path]]:
     return 0, nodes
 
 
-def api() -> tuple[Any, Any, Any, Any]:
+def api() -> tuple[Any, Any, Any, Any, Any]:
     try:
-        from glider_api import Display, DisplayConfig, Mode, Tone
-        return Display, DisplayConfig, Mode, Tone
+        from glider_api import AutoClear, Display, DisplayConfig, Mode, Tone
+        return Display, DisplayConfig, Mode, Tone, AutoClear
     except ImportError as exc:
         raise RuntimeError(
             "glider_api is not installed for " + sys.executable
@@ -171,12 +180,17 @@ def api() -> tuple[Any, Any, Any, Any]:
         ) from exc
 
 
+def _indexed(values: tuple[str, ...], index: int) -> str:
+    """Label lookup that survives a firmware reporting an unknown index."""
+    return values[index] if 0 <= index < len(values) else str(index)
+
+
 def status() -> int:
     code, nodes = require_device()
     if code:
         return code
     try:
-        Display, DisplayConfig, _Mode, _Tone = api()
+        Display, DisplayConfig, _Mode, _Tone, _AutoClear = api()
         config = DisplayConfig.glider_standard()
         # Opening verifies hidapi can actually claim the matching USB device.
         display = Display.new_with_config(config)
@@ -205,6 +219,19 @@ def status() -> int:
         payload["tone"] = None
         payload["mode"] = saved.get("mode", "unknown")
         payload["modeSource"] = "local-state (device firmware does not support read-back)"
+    ac = read_autoclear(display)
+    if ac is not None:
+        ac_mode, ac_interval, ac_threshold = ac
+        payload["autoclear"] = {
+            "mode": _indexed(AC_MODES, ac_mode),
+            "interval": _indexed(AC_INTERVALS, ac_interval),
+            "threshold": _indexed(AC_THRESHOLDS, ac_threshold),
+            "source": "device",
+        }
+        payload["autoclearAvailable"] = True
+    else:
+        payload["autoclear"] = None
+        payload["autoclearAvailable"] = False
     emit(payload)
     return 0
 
@@ -226,6 +253,15 @@ def read_mode(display: Any) -> str | None:
         return None
 
 
+def read_autoclear(display: Any) -> tuple[int, int, int] | None:
+    """Return (mode, interval, threshold) read from the device, or None."""
+    try:
+        ac = display.get_autoclear()
+        return int(ac.mode), int(ac.interval), int(ac.threshold)
+    except Exception:
+        return None
+
+
 def set_mode(name: str) -> int:
     if name not in MODE_NAMES:
         return unavailable("unknown mode '" + name + "'", find_hidraw())
@@ -233,7 +269,7 @@ def set_mode(name: str) -> int:
     if code:
         return code
     try:
-        Display, DisplayConfig, Mode, _Tone = api()
+        Display, DisplayConfig, Mode, _Tone, _AutoClear = api()
         config = DisplayConfig.glider_standard()
         display = Display.new_with_config(config)
         display.set_mode(getattr(Mode, name), config.full_screen())
@@ -252,7 +288,7 @@ def set_tone(kind: str, value: int) -> int:
     if code:
         return code
     try:
-        Display, DisplayConfig, _Mode, Tone = api()
+        Display, DisplayConfig, _Mode, Tone, _AutoClear = api()
         config = DisplayConfig.glider_standard()
         display = Display.new_with_config(config)
         current = read_tone(display)
@@ -275,12 +311,56 @@ def set_tone(kind: str, value: int) -> int:
     return 0
 
 
+def set_autoclear(field: str, label: str) -> int:
+    """Set one auto-clear setting by its human label (e.g. Adaptive, 5 min, Often).
+
+    The other two fields are read back from the device first, so a single
+    setting can be changed without touching the rest — mirroring the OSD.
+    """
+    tables = {"mode": AC_MODES, "interval": AC_INTERVALS, "threshold": AC_THRESHOLDS}
+    table = tables[field]
+    if label not in table:
+        return unavailable(
+            f"unknown auto-clear {field} '{label}'; expected one of: " + ", ".join(table),
+            find_hidraw(),
+        )
+    code, nodes = require_device()
+    if code:
+        return code
+    try:
+        Display, DisplayConfig, _Mode, _Tone, AutoClear = api()
+        config = DisplayConfig.glider_standard()
+        display = Display.new_with_config(config)
+        current = read_autoclear(display)
+        if current is None:
+            return unavailable("device firmware does not support auto-clear read-back", nodes)
+        fields = ("mode", "interval", "threshold")
+        values = dict(zip(fields, current))
+        values[field] = table.index(label)
+        display.set_autoclear(AutoClear(values["mode"], values["interval"], values["threshold"]))
+        emit({
+            "ok": True,
+            "connected": True,
+            "autoclear": {
+                "mode": _indexed(AC_MODES, values["mode"]),
+                "interval": _indexed(AC_INTERVALS, values["interval"]),
+                "threshold": _indexed(AC_THRESHOLDS, values["threshold"]),
+                "source": "device",
+            },
+            "autoclearAvailable": True,
+            "modes": list(MODE_NAMES),
+        })
+        return 0
+    except Exception as exc:
+        return unavailable(f"could not set auto-clear {field} to {label}: " + str(exc), nodes)
+
+
 def redraw() -> int:
     code, nodes = require_device()
     if code:
         return code
     try:
-        Display, DisplayConfig, _Mode, _Tone = api()
+        Display, DisplayConfig, _Mode, _Tone, _AutoClear = api()
         config = DisplayConfig.glider_standard()
         display = Display.new_with_config(config)
         # Hard full-screen refresh: flashes black->white to clear ghosting.
@@ -302,6 +382,9 @@ def main() -> int:
     tone_parser.add_argument("value", type=int)
     contrast_parser = sub.add_parser("set-contrast", help="set contrast (device read-back of the other value)")
     contrast_parser.add_argument("value", type=int)
+    ac_parser = sub.add_parser("set-autoclear", help="set an auto-clear setting (mode, interval or threshold) by label")
+    ac_parser.add_argument("field", choices=("mode", "interval", "threshold"))
+    ac_parser.add_argument("value", help="e.g. Off/Adaptive/Fixed, 1/5/15 min, Sometimes/Occasionally/Often")
     sub.add_parser("redraw", help="force a hard full-screen refresh to clear ghosting")
     args = parser.parse_args()
     if args.command == "status":
@@ -312,6 +395,8 @@ def main() -> int:
         return set_tone("lightness", args.value)
     if args.command == "set-contrast":
         return set_tone("contrast", args.value)
+    if args.command == "set-autoclear":
+        return set_autoclear(args.field, args.value)
     return set_mode(args.mode)
 
 

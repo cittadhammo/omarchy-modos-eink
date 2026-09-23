@@ -25,9 +25,11 @@ Earlier panel screenshot:
 ## Current behavior
 
 The bar label is an e-ink glyph followed by the display's actual refresh mode.
-The helper reads mode, lightness and contrast straight from the controller over
-USB HID (`GETMODE` / `GETTONE` commands) and reports `modeSource: "device"` and
-`tone.source: "device"`. On stock Glider firmware, which cannot answer these
+The helper reads mode, lightness, contrast and auto-clear settings straight
+from the controller over USB HID (`GETMODE` / `GETTONE` / `GETAC` commands)
+and reports `modeSource: "device"`, `tone.source: "device"` and
+`autoclear.source: "device"`. On stock Glider firmware, which cannot answer
+these
 queries, it transparently falls back to a local note in
 `~/.local/state/modos-eink/state.json` and honestly labels the source
 `local-state` instead of pretending it is hardware read-back.
@@ -42,6 +44,11 @@ Interactions are intentionally simple:
   tone LUT the OSD menu uses — the image updates in place with no redraw
   flash. Changes are persisted in the controller's config flash and survive
   power cycles; rapid clicks coalesce into a single flash write.
+- The panel's auto-clear section mirrors the OSD's Auto Clear submenu: every
+  option (Off / Adaptive / Fixed, 1/5/15 min, Sometimes/Occasionally/Often) is
+  a clickable chip with the active one highlighted. The interval row appears
+  only in Fixed mode and the threshold row only in Adaptive. Changes apply
+  instantly and persist exactly like tone changes.
 - Right-click forces a hard full-screen redraw (black-to-white flash) to clear
   ghosting — the same behaviour as the Dev Kit's third physical button. It does
   not change the refresh mode.
@@ -66,9 +73,9 @@ hover state, selection state, and popup surface follow the active theme.
 | `manifest.json` | Omarchy schemaVersion 1 manifest; service + bar-widget kinds. |
 | `Service.qml` | Long-lived singleton; polls `modosctl status` every 15 seconds, runs mode changes, and forces redraws. |
 | `BarWidget.qml` | Compact bar label, click handling, and `Panel.qml` loader. |
-| `Panel.qml` | Theme-aware mode picker with human + technical names, keyboard navigation, and tone steppers. |
+| `Panel.qml` | Theme-aware mode picker with human + technical names, keyboard navigation, one-line tone steppers, and auto-clear chips. |
 | `modosctl` | Launcher that prefers the documented Python virtualenv. |
-| `modosctl.py` | VID/PID detection, JSON status, glider-api mode setter, and full-screen redraw. |
+| `modosctl.py` | VID/PID detection, JSON status, glider-api mode/tone/auto-clear setters, and full-screen redraw. |
 | `udev/69-modos-glider.rules` | Persistent non-root access for the raw HID node. |
 
 ## Hardware and API facts
@@ -130,7 +137,7 @@ the Python extension into the venv used by the included launcher:
 ```sh
 sudo pacman -S --needed rust pkgconf
 git clone https://github.com/cittadhammo/glider-api ~/github/glider-api
-git -C ~/github/glider-api checkout 64fe38c59b13e3cbdff415a94708daa5d81edb10
+git -C ~/github/glider-api checkout 7337cccb46cd1288beafa0e700e3507378d0837b
 python3 -m venv ~/.local/share/modos-eink/venv
 PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 \
   ~/.local/share/modos-eink/venv/bin/pip install ~/github/glider-api
@@ -195,6 +202,7 @@ diagnostic on stderr when it fails. Exit status is zero only for success.
 ~/.config/omarchy/plugins/cittadhammo.modos-eink/modosctl set-mode FastGrey
 ~/.config/omarchy/plugins/cittadhammo.modos-eink/modosctl set-lightness -1
 ~/.config/omarchy/plugins/cittadhammo.modos-eink/modosctl set-contrast 2
+~/.config/omarchy/plugins/cittadhammo.modos-eink/modosctl set-autoclear mode Adaptive
 ~/.config/omarchy/plugins/cittadhammo.modos-eink/modosctl redraw
 ~/.config/omarchy/plugins/cittadhammo.modos-eink/modosctl status
 ```
@@ -205,21 +213,25 @@ reports `mode`, `modeSource`, `tone` (with its `source`) and the supported
 ranges. `set-mode` uses the full-screen rectangle from
 `DisplayConfig.glider_standard()`. `set-lightness` (−3…+3) and `set-contrast`
 (−1…+6) send the new HID commands and echo the device's read-back of the
-untouched companion value. `redraw` calls the API's
+untouched companion value. `set-autoclear <field> <label>` sets one auto-clear
+field (`mode`, `interval` or `threshold`) by its label and reads the two
+untouched fields back from the device first, so a single setting can change
+without disturbing the rest — mirroring the OSD. `redraw` calls the API's
 `Display.redraw(full_screen())` — a hard black-to-white flash that clears
 ghosting without touching the mode.
 
 ### Firmware requirements
 
-The mode/tone read-back and the tone setters need the matching firmware
+The mode/tone/auto-clear read-back and setters need the matching firmware
 commands in the Glider controller. They are implemented, hardware-validated
 and documented in the plugin author's fork:
-[`cittadhammo/Glider` branch `usb-tone-control-setters`](https://github.com/cittadhammo/Glider/tree/usb-tone-control-setters)
-(built on upstream GitLab `main` at `16bdb70c`, plus a fix for an upstream
-`config_save()` bug that silently dropped persisted settings — see
-`docs/glider-tone-control-experiment-log.md` in this repository). On stock
-firmware the plugin still works: mode setting, redraw, and honest
-`local-state` reporting, with the tone steppers hidden rather than broken.
+[`cittadhammo/Glider` branch `usb-ac-control`](https://github.com/cittadhammo/Glider/tree/usb-ac-control)
+(getters + setters + auto-clear on upstream GitLab `main` at `16bdb70c`, plus
+a fix for an upstream `config_save()` bug that silently dropped persisted
+settings — see `docs/glider-tone-control-experiment-log.md` in this
+repository). On stock firmware the plugin still works: mode setting, redraw,
+and honest `local-state` reporting, with the tone steppers and auto-clear
+section hidden rather than broken.
 
 Expected failure messages identify one of: missing device, missing HID ACL,
 missing Python binding, unknown mode, or a controller/API communication error.

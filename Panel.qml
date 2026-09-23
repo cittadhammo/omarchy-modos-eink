@@ -14,6 +14,9 @@ Panel {
   readonly property var barIdentity: hostWidget || root
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+  // Shared width of the small label column (Lightness/Contrast and the
+  // auto-clear rows) so the controls after it start on one vertical line.
+  readonly property int labelColumnWidth: Style.space(84)
   readonly property string currentMode: service ? String(service.currentMode || "unknown") : "unknown"
   readonly property var modes: service && Array.isArray(service.modes) ? service.modes : []
 
@@ -44,6 +47,56 @@ Panel {
     }
   }
 
+  // Label + −/value/+ group for one tone control; both groups share a line.
+  component ToneGroup : Row {
+    id: toneGroup
+    property string label: ""
+    property bool isLightness: true
+    spacing: Style.space(6)
+    property bool toneReady: root.service && root.service.toneAvailable
+    property int value: root.service
+      ? (toneGroup.isLightness ? root.service.lightness : root.service.contrast) : 0
+
+    Text {
+      text: toneGroup.label
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.body
+      width: root.labelColumnWidth
+      elide: Text.ElideRight
+      anchors.verticalCenter: parent.verticalCenter
+    }
+
+    StepperButton {
+      glyph: "−"
+      visible: toneGroup.toneReady
+      anchors.verticalCenter: parent.verticalCenter
+      onStep: root.service && (toneGroup.isLightness
+        ? root.service.setLightness(root.service.lightness - 1)
+        : root.service.setContrast(root.service.contrast - 1))
+    }
+
+    Text {
+      text: toneGroup.toneReady ? toneGroup.value : "—"
+      color: Qt.darker(root.foreground, 1.45)
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.body
+      font.bold: true
+      horizontalAlignment: Text.AlignHCenter
+      width: Style.space(28)
+      anchors.verticalCenter: parent.verticalCenter
+    }
+
+    StepperButton {
+      glyph: "+"
+      visible: toneGroup.toneReady
+      anchors.verticalCenter: parent.verticalCenter
+      onStep: root.service && (toneGroup.isLightness
+        ? root.service.setLightness(root.service.lightness + 1)
+        : root.service.setContrast(root.service.contrast + 1))
+    }
+  }
+
   // Human label (device-menu style) plus the underlying technical enum name.
   // glider-api has no authoritative enum<->preset table, so both are shown.
   function labelFor(mode) {
@@ -61,6 +114,7 @@ Panel {
   function forceRedraw() {
     if (service) service.redraw()
   }
+
 
   onOpenedChanged: {
     if (opened && service) {
@@ -164,14 +218,13 @@ Panel {
         }
 
         Text {
-          text: "Please refresh after changing mode"
-          color: Qt.darker(root.foreground, 1.45)
+          visible: root.service && root.service.lastError !== ""
+          width: parent.width
+          text: root.service ? root.service.lastError : "Modos service is loading…"
+          wrapMode: Text.Wrap
+          color: Color.urgent
           font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          horizontalAlignment: Text.AlignRight
-          anchors.left: parent.left
-          anchors.right: parent.right
-          anchors.rightMargin: Style.space(96) - refreshTitle.implicitWidth - refreshModeRow.spacing
+          font.pixelSize: Style.font.bodySmall
         }
 
         Repeater {
@@ -238,76 +291,107 @@ Panel {
           }
         }
 
-        Text {
-          visible: root.service && root.service.lastError !== ""
+        // Both tone controls share one line: Lightness −/value/+ on the left,
+        // Contrast −/value/+ right-aligned.
+        Item {
+          width: content.width
+          height: Math.max(lightGroup.implicitHeight, contrastGroup.implicitHeight)
+
+          ToneGroup {
+            id: lightGroup
+            label: "Lightness"
+            isLightness: true
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+          }
+
+          ToneGroup {
+            id: contrastGroup
+            label: "Contrast"
+            isLightness: false
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+          }
+        }
+
+        // Auto Clear (anti-ghosting refresh) — every option shown as a
+        // clickable chip with the active one highlighted, mirroring the OSD's
+        // Auto Clear submenu. Interval applies to Fixed mode and the ghost
+        // threshold to Adaptive, so each row only appears when it matters.
+        Column {
+          id: acSection
+          visible: root.service && root.service.autoclearAvailable
           width: parent.width
-          text: root.service ? root.service.lastError : "Modos service is loading…"
-          wrapMode: Text.Wrap
-          color: Color.urgent
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.bodySmall
-        }
+          spacing: Style.space(6)
 
-        Text {
-          text: "TONE"
-          color: Qt.darker(root.foreground, 1.45)
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          font.letterSpacing: 1
-        }
+          Repeater {
+            model: [
+              { field: "mode", label: "Clear", values: "acModeLabels", current: "acMode", always: true, showWhen: "" },
+              { field: "interval", label: "Every", values: "acIntervalLabels", current: "acInterval", always: false, showWhen: "Fixed" },
+              { field: "threshold", label: "Ghost", values: "acThresholdLabels", current: "acThreshold", always: false, showWhen: "Adaptive" }
+            ]
+            delegate: Row {
+              id: acRow
+              required property var modelData
+              width: acSection.width
+              spacing: Style.space(6)
+              visible: acRow.modelData.always
+                || (root.service && root.service.acMode === acRow.modelData.showWhen)
 
-        Repeater {
-          model: [
-            { kind: "lightness", label: "Lightness" },
-            { kind: "contrast", label: "Contrast" }
-          ]
-          delegate: Row {
-            id: toneRow
-            required property var modelData
-            width: content.width
-            spacing: Style.space(8)
-            property bool isLightness: modelData.kind === "lightness"
-            property bool toneReady: root.service && root.service.toneAvailable
-            property int value: root.service
-              ? (isLightness ? root.service.lightness : root.service.contrast) : 0
+              // Labels and the current value come straight from the service so
+              // rows update on every status poll without rebuilding the model.
+              property var values: root.service ? root.service[acRow.modelData.values] : []
+              property string current: root.service ? String(root.service[acRow.modelData.current] || "") : ""
 
-            Text {
-              text: toneRow.modelData.label
-                + (toneRow.toneReady ? "" : " (read-back unavailable)")
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-              anchors.verticalCenter: parent.verticalCenter
-              width: content.width - Style.space(120)
-            }
+              Text {
+                text: acRow.modelData.label
+                color: Qt.darker(root.foreground, 1.45)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                width: root.labelColumnWidth
+                elide: Text.ElideRight
+                anchors.verticalCenter: parent.verticalCenter
+              }
 
-            StepperButton {
-              glyph: "−"
-              visible: toneRow.toneReady
-              anchors.verticalCenter: parent.verticalCenter
-              onStep: root.service && (toneRow.isLightness
-                ? root.service.setLightness(root.service.lightness - 1)
-                : root.service.setContrast(root.service.contrast - 1))
-            }
+              Repeater {
+                model: acRow.values
+                delegate: BorderSurface {
+                  id: chip
+                  required property string modelData
+                  required property int index
+                  width: chipLabel.implicitWidth + Style.space(16)
+                  implicitHeight: Style.space(26)
+                  radius: Style.cornerRadius
+                  anchors.verticalCenter: parent.verticalCenter
+                  property bool selected: acRow.current === chip.modelData
+                  property bool hovered: chipMouse.containsMouse
+                  color: selected
+                    ? Style.selectedFillFor(root.foreground, Color.accent)
+                    : (hovered ? Style.hoverFillFor(root.foreground, Color.accent) : "transparent")
+                  borderSpec: selected
+                    ? Border.controlSpec("selected", root.foreground, Color.accent)
+                    : Border.controlSpec(hovered ? "hover-cursor" : "normal", root.foreground, Color.accent)
 
-            Text {
-              text: toneRow.toneReady ? toneRow.value : "—"
-              color: Qt.darker(root.foreground, 1.45)
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-              font.bold: true
-              horizontalAlignment: Text.AlignHCenter
-              width: Style.space(36)
-              anchors.verticalCenter: parent.verticalCenter
-            }
+                  Text {
+                    id: chipLabel
+                    anchors.centerIn: parent
+                    text: chip.modelData
+                    color: chip.selected
+                      ? Style.selectedStateColor(root.foreground, Color.accent) : root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: chip.selected
+                  }
 
-            StepperButton {
-              glyph: "+"
-              visible: toneRow.toneReady
-              anchors.verticalCenter: parent.verticalCenter
-              onStep: root.service && (toneRow.isLightness
-                ? root.service.setLightness(root.service.lightness + 1)
-                : root.service.setContrast(root.service.contrast + 1))
+                  MouseArea {
+                    id: chipMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.service && root.service.setAutoclear(acRow.modelData.field, chip.modelData)
+                  }
+                }
+              }
             }
           }
         }

@@ -16,6 +16,14 @@ Item {
   property bool toneAvailable: false
   property var lightnessRange: [-3, 3]
   property var contrastRange: [-1, 6]
+  // Auto Clear state (read back from the device; empty strings when unknown).
+  property string acMode: ""
+  property string acInterval: ""
+  property string acThreshold: ""
+  property bool autoclearAvailable: false
+  property var acModeLabels: []
+  property var acIntervalLabels: []
+  property var acThresholdLabels: []
   property string lastError: "Checking Modos display…"
   property var modes: []
   property var modeLabels: ({})
@@ -49,6 +57,18 @@ Item {
       if (result.modeDescriptions && typeof result.modeDescriptions === "object") modeDescriptions = result.modeDescriptions
       if (Array.isArray(result.lightnessRange) && result.lightnessRange.length === 2) lightnessRange = result.lightnessRange
       if (Array.isArray(result.contrastRange) && result.contrastRange.length === 2) contrastRange = result.contrastRange
+      if (Array.isArray(result.acModes)) acModeLabels = result.acModes
+      if (Array.isArray(result.acIntervals)) acIntervalLabels = result.acIntervals
+      if (Array.isArray(result.acThresholds)) acThresholdLabels = result.acThresholds
+      if (result.autoclear && typeof result.autoclear === "object") {
+        autoclearAvailable = true
+        acMode = String(result.autoclear.mode)
+        acInterval = String(result.autoclear.interval)
+        acThreshold = String(result.autoclear.threshold)
+      } else if (result.ok === true) {
+        // Firmware without auto-clear read-back.
+        autoclearAvailable = false
+      }
       if (result.tone && typeof result.tone === "object") {
         toneAvailable = true
         lightness = parseInt(result.tone.lightness, 10)
@@ -124,6 +144,17 @@ Item {
     _actionOutput = ""
     _actionError = ""
     actionProcess.command = [helperPath, "redraw"]
+    actionProcess.running = true
+  }
+
+  // Set one auto-clear setting by human label (e.g. Adaptive, 5 min, Often);
+  // the helper reads the other two fields from the device so nothing else
+  // changes. The follow-up status refresh confirms the new values.
+  function setAutoclear(field, value) {
+    if (actionProcess.running || !field || !value) return
+    _actionOutput = ""
+    _actionError = ""
+    actionProcess.command = [helperPath, "set-autoclear", String(field), String(value)]
     actionProcess.running = true
   }
 
