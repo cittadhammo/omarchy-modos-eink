@@ -228,8 +228,10 @@ and documented in the plugin author's fork:
 [`cittadhammo/Glider` branch `usb-ac-control`](https://github.com/cittadhammo/Glider/tree/usb-ac-control)
 (getters + setters + auto-clear on upstream GitLab `main` at `16bdb70c`, plus
 a fix for an upstream `config_save()` bug that silently dropped persisted
-settings — see `docs/glider-tone-control-experiment-log.md` in this
-repository). On stock firmware the plugin still works: mode setting, redraw,
+settings, and a fix for an upstream config-validation bug that reset any
+host-set update mode of 2 or 7 — including the plugin's Browsing — back to
+Watching on every boot; see `docs/glider-tone-control-experiment-log.md` in
+this repository). On stock firmware the plugin still works: mode setting, redraw,
 and honest `local-state` reporting, with the tone steppers and auto-clear
 section hidden rather than broken.
 

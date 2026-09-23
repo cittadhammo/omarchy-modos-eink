@@ -434,3 +434,123 @@ Section title dropped entirely.
   exercised green. Lesson recorded: when changing a shared helper's
   signature, exercise every consumer.
 
+---
+
+# Round 5 — Browsing lost on replug: a config-validation bug (upstream)
+
+Date: 2026-09-23
+Firmware: `usb-ac-control` @ **5d3d40c** (dev11, flashed)
+glider-api: unchanged @ b80cd7e (no host-side change needed)
+
+## Symptom
+
+User reported: set **Browsing** in the panel → unplug/replug → screen comes
+back dithered (Watching-like) and the panel reports Watching. **Typing** and
+**Reading** survived the same replug; only Browsing was lost. The panel said
+"Browsing" for ~1 s after replug, then flipped to Watching.
+
+## The debugging road (with the theories that died)
+
+1. **Theory: the FPGA drops the boot-time SETMODE** (dev9's fix added a
+   conditional re-apply). Typing/Reading coming back correctly seemed to
+   confirm it — but Browsing kept failing, which a pure timing race could
+   not explain (it would be replug-dependent, not mode-dependent).
+2. **dev10** instrumented the re-apply to wait for `caster_is_busy()==0`.
+   Console log evidence: `FPGA started with status 29` at t=2.135, then
+   `FPGA still busy after 10 s; giving up on mode re-apply` at t=4.164 —
+   i.e. the give-up fired **2.03 s** after pipeline start (deadline bug:
+   the deadline constant never matched the message), and the FPGA operation
+   queue **never went idle once in those 2 s**. With live 60 fps video it
+   plausibly never does. Conclusion: wait-for-idle can never fire in
+   practice; an unconditional delayed re-apply (dev9 style) is the right
+   design. (Also confirmed: `status 29 & 3 = 1` → OP_QUEUE busy right at
+   pipeline start, so the boot SETMODE at pipeline start can indeed be
+   dropped — the re-apply is still needed.)
+3. **Theory: the deferred config save lost the change** (quick unplug
+   inside the save window). Disproved: saves are consumed by the UI loop's
+   ≤200 ms poll; after deliberately setting Browsing via CLI and waiting
+   seconds, the replug *still* came back Watching. And the deciding
+   observation: **after replug the device's GETMODE itself reported
+   FastMonoBayer** — the device's own config held Watching, so this was
+   never a display/pixel issue at all. Something rewrote (or rejected) the
+   stored mode.
+
+## Root cause: `is_valid_update_mode()` rejects two legal modes
+
+`fw/User/config.c` (stock code, untouched by all our branches):
+
+```c
+static bool is_valid_update_mode(int mode) {
+    return (mode == UM_FAST_MONO_BAYER) ||        // 3
+           (mode == UM_FAST_MONO_BLUE_NOISE) ||   // 4
+           (mode == UM_FAST_GREY) ||              // 5
+           (mode == UM_AUTO_LUT_NO_DITHER);       // 6
+}
+```
+
+`config_validate_loaded()` runs this whitelist on **every boot** and
+silently resets a rejected value to `UM_FAST_MONO_BAYER`. But the USB
+SETMODE protocol and the `update_mode_t` enum happily accept
+`UM_FAST_MONO_NO_DITHER` (**2**) and `UM_AUTO_LUT_ERROR_DIFFUSION`
+(**7**) — so any host-set mode 2 or 7 is *stored fine, then discarded at
+the next boot*. Modes 3–6 pass validation, which is exactly why Typing,
+Watching and Reading survived while only Browsing (=2, our plugin's
+sharpest mode) was lost. Stock OSD users never notice because the OSD's
+four modes (3/4/5/6) all pass — this is a latent upstream bug that only
+host control can trigger.
+
+**Upstream issue material** — worth reporting when we next contact the
+maintainers: "SETMODE to 2 or 7 persists in config.bin but is reset to 3
+by config_validate_loaded() at every boot; is_valid_update_mode() omits
+two renderable enum values."
+
+## The naming tangle (documented so it never confuses us again)
+
+- Firmware OSD (`ui.c modes[]`): Browsing=**3** (Bayer), Watching=4
+  (BlueNoise), Typing=5 (FastGrey), Reading=6 (AutoLUTNoDither).
+- Our plugin (round-3 UI choice): Browsing=**2** (FastMonoNoDither, the
+  sharpest), Watching=4, Typing=5, Reading=6 — technical name always shown
+  in the UI secondary line. The firmware OSD has no no-dither mode at all.
+- So "Browsing" means different modes depending on which surface you're
+  looking at. The plugin did nothing wrong technically — it stored mode 2
+  correctly — but the firmware's validator then threw 2 away at boot,
+  reset it to 3, and the plugin reported the device's mode 3 as
+  "Watching". Hence the maddening flip.
+
+## Console lessons learned (for future sessions)
+
+- The USB-CDC shell requires **DTR raised** (open O_RDWR) and **CR line
+  endings**; LF-only commands echo but never execute.
+- `syslog` prints the **log buffer accumulated since the previous dump**
+  (incremental), so an idle-then-quiet read looks empty. Boot evidence
+  must be pulled shortly after the event of interest.
+- On replug the `/dev/ttyACM0` node is destroyed and recreated; any
+  capture script must wait/poll for the node rather than holding a dead
+  handle.
+- Process discipline: **commit first, build second** — dev9's binary
+  stamped its version with the *pre-fix* hash because the build ran
+  before the commit. dev11 stamps correctly.
+
+## The fix (firmware `5d3d40c`, flashed as dev11)
+
+1. `is_valid_update_mode()` now accepts 2–7; only the MANUAL_LUT pair
+   (0/1) stays excluded — their LUT is host-uploaded and could not be
+   restored at boot, so persisting them would brick the boot render.
+2. The post-start mode re-apply is **unconditional** at +2 s (dev9's
+   proven design) with an honest log line, replacing the never-firing
+   wait-for-idle poll. The visible effect: ~2 s after every replug the
+   screen does one full refresh as the saved mode is re-asserted.
+
+Build: 0 errors / 54 warnings; flashed; `ver` reports
+`Git: 5d3d40c…`. First boot after flash already read back
+`FastMonoNoDither` — the persisted Browsing was accepted for the first
+ time.
+
+## Test protocol (user, pending)
+
+1. Panel → Browsing, wait a few seconds (save coalesces), unplug/replug
+   → must come back sharp no-dither, panel steady on Browsing.
+2. Repeat for Watching / Typing / Reading — all must survive.
+3. Repeat the flaky case twice more for confidence.
+4. (Then restore user's preferred daily mode.)
+
