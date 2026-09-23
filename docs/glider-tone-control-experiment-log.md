@@ -352,3 +352,23 @@ bitstream afterwards (stock 1.1.1 tarball at `~/Github/1.1.1/` works).
    read-back → replug → reboot persistence.
 4. Consider reporting upstream (issue #7): getters + the `config_save`
    bug fix are directly valuable to the project.
+
+---
+
+# Round 3 (2026-09-23): setters with deferred save — success
+
+Branch `usb-tone-control-setters` (commit `5ff7792`) on top of the getters:
+SETLIGHTNESS (0x09, −3…+3) / SETCONTRAST (0x0A, −1…+6) apply via the tone
+LUT immediately and request the flash write through `config_request_save()`;
+the UI task performs the actual SPIFFS write on its next loop (≤200 ms),
+so USB context never touches flash and bursts coalesce.
+
+Test ladder, all passed:
+- video after flash; single setter (the exact operation that froze round 1)
+  applied live — user visually confirmed the dim, no redraw flash;
+- read-back 0 → −1; 6-set rapid burst with no hiccup or re-enumeration;
+- unplug/replug: video restored, boots with host-set lightness −1 and
+  OSD-set Typing mode — host-written config persists.
+
+Plugin `master` merged the `tone-control` branch: panel now shows device
+read-back tone/mode (`source: "device"`) and the tone steppers are live.
