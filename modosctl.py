@@ -176,7 +176,7 @@ def api() -> tuple[Any, Any, Any, Any, Any]:
             + "; install it with: " + sys.executable
             + " -m pip install ~/github/glider-api"
             + " (after `git -C ~/github/glider-api checkout "
-            + "b80cd7ed2ea16b5f93800ba1fb4ea75465acf04d`)"
+            + "dff53d56d58e26256d49959df7676821c5d2c5bc`)"
         ) from exc
 
 

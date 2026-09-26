@@ -81,9 +81,10 @@ hover state, selection state, and popup surface follow the active theme.
 ## Hardware and API facts
 
 The checked-out upstream source is `~/github/glider-api` pinned to the
-immutable commit `b80cd7ed2ea16b5f93800ba1fb4ea75465acf04d` ("sdk-developer-readiness") —
-the exact snapshot this plugin is built and validated against. Its standard
-Glider configuration is:
+immutable commit `dff53d56d58e26256d49959df7676821c5d2c5bc` (upstream `main`
+as of the merge of PR #8, "Tone control and state read-back") — the exact
+snapshot this plugin is built and validated against. Its standard Glider
+configuration is:
 
 - USB vendor ID: `0x1209`
 - USB product ID: `0xae86`
@@ -114,13 +115,16 @@ rather than presenting the label as the device's exact read-out.
 
 The API did not historically expose contrast, brightness/lightness, gamma, or
 mode read-back. The plugin author implemented these — `get_mode`, `get_tone`,
-`set_tone` and `get_signal_status` — in a [fork branch of glider-api](https://github.com/cittadhammo/glider-api/tree/tone-control)
-together with matching firmware commands (`GETTONE`/`GETMODE`/`GETSIGNAL`,
-`SETLIGHTNESS`/`SETCONTRAST`); the work is proposed upstream (Modos-Labs
-glider-api issue #7). Until a pin incorporating it is published, this plugin
-targets the `tone-control` branch of the fork and degrades gracefully to
-`local-state` behavior on stock firmware. This 13-inch monochrome Dev Kit has
-no front light, so no such control is shown and none would function.
+`set_tone` and `get_signal_status` — together with matching firmware commands
+(`GETTONE`/`GETMODE`/`GETSIGNAL`, `SETLIGHTNESS`/`SETCONTRAST`). The host half
+was merged upstream as
+[Modos-Labs/glider-api#8](https://github.com/Modos-Labs/glider-api/pull/8)
+(tracked by [issue #7](https://github.com/Modos-Labs/glider-api/issues/7)), so
+the pin above points at upstream `main` and needs no fork. The firmware half is
+still open as [Modos-Labs/Glider#22](https://github.com/Modos-Labs/Glider/pull/22);
+until it lands the plugin degrades gracefully to `local-state` behavior on
+stock firmware. This 13-inch monochrome Dev Kit has no front light, so no such
+control is shown and none would function.
 
 ## Installation
 
@@ -136,20 +140,19 @@ the Python extension into the venv used by the included launcher:
 
 ```sh
 sudo pacman -S --needed rust pkgconf
-git clone https://github.com/cittadhammo/glider-api ~/github/glider-api
-git -C ~/github/glider-api checkout 7337cccb46cd1288beafa0e700e3507378d0837b
+git clone https://github.com/Modos-Labs/glider-api ~/github/glider-api
+git -C ~/github/glider-api checkout dff53d56d58e26256d49959df7676821c5d2c5bc
 python3 -m venv ~/.local/share/modos-eink/venv
 PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 \
   ~/.local/share/modos-eink/venv/bin/pip install ~/github/glider-api
 ```
 
-The `git checkout` line pins `glider-api` to an immutable commit SHA (the
-plugin author's `tone-control` branch, which adds tone control and state
-read-back — pending upstream review; swap to an upstream pin once it merges)
-so every install builds exactly the code this plugin was reviewed against. To
-update `glider-api` later, move the pin forward deliberately: checkout a newer
-commit in that repository, rerun the `pip install` above, retest, and bump the
-SHA in this file and in `modosctl.py`.
+The `git checkout` line pins `glider-api` to an immutable commit SHA (upstream
+`main` as of PR #8, which carries the tone control and state read-back this
+plugin needs) so every install builds exactly the code this plugin was
+reviewed against. To update `glider-api` later, move the pin forward
+deliberately: checkout a newer commit in that repository, rerun the
+`pip install` above, retest, and bump the SHA in this file and in `modosctl.py`.
 
 The compatibility flag is needed on Python 3.14 and later, which is newer than
 the PyO3 0.24 version guard (which stops at Python 3.13). A Python 3.13
@@ -231,9 +234,13 @@ a fix for an upstream `config_save()` bug that silently dropped persisted
 settings, and a fix for an upstream config-validation bug that reset any
 host-set update mode of 2 or 7 — including the plugin's Browsing — back to
 Watching on every boot; see `docs/glider-tone-control-experiment-log.md` in
-this repository). On stock firmware the plugin still works: mode setting, redraw,
-and honest `local-state` reporting, with the tone steppers and auto-clear
-section hidden rather than broken.
+this repository). That work is open upstream as
+[Modos-Labs/Glider#22](https://github.com/Modos-Labs/Glider/pull/22), with the
+config-validation half reported separately as
+[issue #23](https://github.com/Modos-Labs/Glider/issues/23). On stock firmware
+the plugin still works: mode setting, redraw, and honest `local-state`
+reporting, with the tone steppers and auto-clear section hidden rather than
+broken.
 
 Expected failure messages identify one of: missing device, missing HID ACL,
 missing Python binding, unknown mode, or a controller/API communication error.
