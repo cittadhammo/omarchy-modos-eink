@@ -80,7 +80,7 @@ hover state, selection state, and popup surface follow the active theme.
 
 ## Hardware and API facts
 
-The checked-out upstream source is `~/github/glider-api` pinned to the
+The checked-out upstream source is `~/Github/glider-api` pinned to the
 immutable commit `dff53d56d58e26256d49959df7676821c5d2c5bc` (upstream `main`
 as of the merge of PR #8, "Tone control and state read-back") — the exact
 snapshot this plugin is built and validated against. Its standard Glider
@@ -140,11 +140,11 @@ the Python extension into the venv used by the included launcher:
 
 ```sh
 sudo pacman -S --needed rust pkgconf
-git clone https://github.com/Modos-Labs/glider-api ~/github/glider-api
-git -C ~/github/glider-api checkout dff53d56d58e26256d49959df7676821c5d2c5bc
+git clone https://github.com/Modos-Labs/glider-api ~/Github/glider-api
+git -C ~/Github/glider-api checkout dff53d56d58e26256d49959df7676821c5d2c5bc
 python3 -m venv ~/.local/share/modos-eink/venv
 PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 \
-  ~/.local/share/modos-eink/venv/bin/pip install ~/github/glider-api
+  ~/.local/share/modos-eink/venv/bin/pip install ~/Github/glider-api
 ```
 
 The `git checkout` line pins `glider-api` to an immutable commit SHA (upstream
@@ -327,5 +327,5 @@ rm -f ~/.local/state/modos-eink/state.json
 
 The plugin never touches user configuration, so a proper removal restores the
 pre-install state. The Python venv under `~/.local/share/modos-eink/venv/` and
-the local `glider-api` checkout under `~/github/glider-api/` were installed for
+the local `glider-api` checkout under `~/Github/glider-api/` were installed for
 this plugin; delete them too if nothing else uses them.

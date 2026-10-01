@@ -174,8 +174,8 @@ def api() -> tuple[Any, Any, Any, Any, Any]:
         raise RuntimeError(
             "glider_api is not installed for " + sys.executable
             + "; install it with: " + sys.executable
-            + " -m pip install ~/github/glider-api"
-            + " (after `git -C ~/github/glider-api checkout "
+            + " -m pip install ~/Github/glider-api"
+            + " (after `git -C ~/Github/glider-api checkout "
             + "dff53d56d58e26256d49959df7676821c5d2c5bc`)"
         ) from exc
 
